@@ -28,7 +28,15 @@ import okhttp3.Request;
 
 public class Chuiyao extends MangaParser {
 
-    public static final int TYPE = 9;
+    /**
+     * 原本是 9，与 {@link YYLS} 撞号。
+     *
+     * <p>Android 版靠「{@code SourceManager.getParser} 的 switch 里不写这个 case、
+     * {@code UpdateHelper.initSource} 的清单里也不加它」把冲突破解掉了，代价是这个图源
+     * 从来没被注册过，等于不存在。桌面端改成反射自动注册后，这个撞号会立刻变成
+     * 两个图源抢同一个 type，所以换成没被占用的 103。
+     */
+    public static final int TYPE = 103;
     public static final String DEFAULT_TITLE = "吹妖漫画";
 
     public Chuiyao(Source source) {

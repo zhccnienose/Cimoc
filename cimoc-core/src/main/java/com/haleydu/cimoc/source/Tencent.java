@@ -17,6 +17,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -50,7 +51,8 @@ public class Tencent extends MangaParser {
     public Request getSearchRequest(String keyword, int page) throws UnsupportedEncodingException {
         String url = "";
         if (page == 1)
-            url = "https://m.ac.qq.com/search/result?word=%s".concat(keyword);
+            url = StringUtils.format("https://m.ac.qq.com/search/result?word=%s",
+                    URLEncoder.encode(keyword, "UTF-8"));
         return new Request.Builder().url(url).build();
     }
 
