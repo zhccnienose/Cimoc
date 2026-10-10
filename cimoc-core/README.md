@@ -6,7 +6,7 @@ Cimoc 漫画阅读器的**纯 JVM 核心层**，不含任何 Android 依赖。�
 ## 这个模块解决什么问题
 
 原工程把解析逻辑和 Activity/Fragment 焊死在一起，脱离 Android 设备连一次编译验证都做不了。
-抽取之后最直接的收益是：**45 个图源现在可以在 CI 里离线逐个加载、构造、拼出搜索 URL**，
+抽取之后最直接的收益是：**42 个图源现在可以在 CI 里离线逐个加载、构造、拼出搜索 URL**，
 见 `src/test/java/com/haleydu/cimoc/SourceSmokeTest.java`。
 
 ## 目录结构
@@ -30,11 +30,11 @@ src/main/java/
     ├── model/       (4)   Chapter / Comic / ImageUrl / Source —— 纯 POJO
     ├── parser/      (9)   Parser 接口 + MangaParser 抽象基类 + 各类遍历器
     ├── soup/        (2)   MDocument / Node，jsoup 的一层薄封装
-    ├── source/      (50)  45 个可用图源 + 5 个已停用的空占位类
+    ├── source/      (47)  42 个可用图源 + 5 个已停用的空占位类
     └── utils/       (8)   AES 解密、JS 脚本解密、URL 编码等
 ```
 
-编译产物 146 个 class（含内部类）。
+编译产物 137 个 class（含内部类）。
 
 ## Android 兼容 shim
 
@@ -93,7 +93,7 @@ $env:JAVA_HOME = "D:\java\java17"
 > Gradle 发行包走的是**腾讯镜像**（见 `gradle-wrapper.properties`）。官方源
 > `services.gradle.org` 会 307 跳转到 CDN，实测在那一步会卡死；镜像直连且是完整的 134MB。
 
-实测输出（main 产物 146 个 class，与升级前一致）：
+实测输出（升级时 main 产物 146 个 class，与升级前一致；现为 137）：
 
 ```
 > Task :compileKotlin
@@ -117,21 +117,24 @@ BUILD SUCCESSFUL
 cd cimoc-core
 ./verify.sh          # 编译 + 跑测试
 ./verify.sh compile  # 只编译
-./verify.sh test     # 只跑测试
+./verify.sh test     # 只跑测试（⚠️ 复用上次的 out/，不重新编译）
 ```
+
+> `./verify.sh test` 不会重新编译，删过源文件后直接跑它会读到**残留的旧 class**，
+> 数量还是删之前的值。换过源文件就先跑 `./verify.sh`（或 `./verify.sh compile`）。
 
 实测输出：
 
 ```
 ==> [1/3] javac: 编译 Java 主源码  (JDK: /d/java/java17)
-    Java 类: 143
+    Java 类: 134
 ==> [2/3] kotlinc: 编译 Kotlin 主源码  (Kotlin: 1.9.24)
     Kotlin 类: 3
-    合计类: 146
+    合计类: 137
 ==> [3/3] javac: 编译测试源码
     测试类: 1
 ==> JUnit
-[SourceSmokeTest] 通过 45 / 45 个图源
+[SourceSmokeTest] 通过 42 / 42 个图源
 OK (4 tests)
 ```
 
@@ -172,14 +175,14 @@ Kotlin 工具链的 jar **不放进 `libs/`**，而是按 `KOTLIN_VERSION` 从 G
    4.x 需要改动 API（如 `isHttp()` 在 3.12.3 里不存在）。**这是最该优先处理的一项。**
 2. **fastjson 1.2.83 是个隐患。** 它大量用反射访问 `java.base` 内部，在 JDK 17 的强封装下
    迟早会抛 `InaccessibleObjectException`——**本次升级到 JDK 17 后实测没有触发**
-   （受影响的两个图源 `ManHuaDB`、`MH50` 冒烟测试通过），但这是运气而非保证。
+   （受影响的图源 `ManHuaDB` 冒烟测试通过），但这是运气而非保证。
    建议换成 Gson（已经在依赖里，`ManHuaDB` 本来就在同时用两者）。
 3. **`CimocCore` 是过渡设计。** 它是个静态持有者（`install(client, settings)` +
    `httpClient()` / `settings()`），用来顶掉原 `App.getHttpClient()` 之类的静态单例。
    正式版本应改为构造注入或依赖注入容器。见该类的 javadoc。
 4. **5 个图源是死占位类**（`ExHentai`、`HHSSEE`、`NHentai`、`Pic177`、`Wnacg`）：
    整个类体在原工程里就被块注释掉了，形如 `public class ExHentai/* extends MangaParser */ {}`。
-   实际可用图源是 **45 个而不是 50 个**。迁移时原样保留，未擅自删除。
+   实际可用图源是 **42 个而不是 47 个**。迁移时原样保留，未擅自删除。
 5. **GreenDAO 已移除，但持久层还没有替代品。** `ImageUrl.StringConverter` 里的
    `##Cimoc##` 分隔符是**已落盘数据的格式**，新持久层必须沿用，否则旧数据读不回。
 6. **guava 33.0.0-jre 只为 11 个文件引入**，体积偏大，值得评估是否换成标准库。
@@ -187,6 +190,9 @@ Kotlin 工具链的 jar **不放进 `libs/`**，而是按 `KOTLIN_VERSION` 从 G
 > 工具链升级（Gradle 6.7.1/JDK 8/Kotlin 1.5.10 → Gradle 8.7/JDK 17/Kotlin 1.9.24）
 > **已于 2026-10-10 完成并验证**。升级前后 main 产物都是 146 个 class，冒烟测试都是 45/45——
 > 类数一致是「升级没有改变语义」最直接的证据。
+>
+> 其后又删除了 3 个已确认停站的图源（`MangaNel` / `Mangakakalot` / `MH50`，合计 9 个 class），
+> 所以当前是 **137 个 class、冒烟测试 42/42**。上面那段验证记录保持原样，不追改。
 
 
 ## 前端集成方式

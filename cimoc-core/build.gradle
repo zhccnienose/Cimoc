@@ -39,7 +39,7 @@ dependencies {
     // ---- implementation：纯内部实现细节，不外泄
     implementation 'com.google.guava:guava:33.0.0-jre'        // 11 个文件
     implementation 'org.jsoup:jsoup:1.17.2'                   // soup/ 层的 HTML 解析
-    implementation 'com.alibaba:fastjson:1.2.83'              // ManHuaDB、MH50
+    implementation 'com.alibaba:fastjson:1.2.83'              // ManHuaDB
     implementation 'com.google.code.gson:gson:2.10.1'         // ManHuaDB
     implementation 'org.mozilla:rhino:1.7.13'                 // DecryptionUtils 里的 JS 解密脚本
 
@@ -57,7 +57,7 @@ compileJava {
 }
 
 test {
-    // 测试输出里有中文（如「通过 45 / 45 个图源」），不指定编码会在 Windows 终端糊成乱码
+    // 测试输出里有中文（如「通过 42 / 42 个图源」），不指定编码会在 Windows 终端糊成乱码
     systemProperty 'file.encoding', 'UTF-8'
 
     testLogging {
