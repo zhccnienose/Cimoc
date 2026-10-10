@@ -1,0 +1,68 @@
+plugins {
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm' version '1.9.24'
+}
+
+group = 'com.haleydu.cimoc'
+version = '0.1.0'
+
+// 构建组合：Gradle 8.7 + JDK 17 + Kotlin 1.9.24。
+//
+// 上一版是 Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10。之所以整个构建被锁在 JDK 8 上，是因为
+// Kotlin 1.5.10 的代码生成阶段在 JDK 17 上会抛后端异常（与代码本身无关，是编译器版本问题）。
+// 升到 1.9.24 后该限制解除，工具链可以回到主流版本。
+repositories {
+    mavenCentral()
+}
+
+// 一行同时管住 javac 和 kotlinc 的目标版本。
+// 比分别写 sourceCompatibility + compileKotlin.kotlinOptions.jvmTarget 更不容易漏。
+kotlin {
+    jvmToolchain(17)
+}
+
+// .java 和 .kt 混放在 src/main/java 下（沿用原 Android 工程的目录习惯，迁移时未做文件搬移）。
+// Kotlin 插件默认只看 src/main/kotlin，这里把 java 目录也加进 Kotlin 源集。
+sourceSets {
+    main {
+        kotlin.srcDir 'src/main/java'
+    }
+}
+
+dependencies {
+    // ---- api：这些类型出现在公开签名里，消费方（前端）需要能看到
+    //   okhttp3.Request / Headers / OkHttpClient  → Parser、MangaParser 的返回值与参数
+    //   org.json.JSONException                    → Parser 接口 throws 子句
+    api 'com.squareup.okhttp3:okhttp:3.12.3'
+    api 'org.json:json:20231013'
+
+    // ---- implementation：纯内部实现细节，不外泄
+    implementation 'com.google.guava:guava:33.0.0-jre'        // 11 个文件
+    implementation 'org.jsoup:jsoup:1.17.2'                   // soup/ 层的 HTML 解析
+    implementation 'com.alibaba:fastjson:1.2.83'              // ManHuaDB
+    implementation 'com.google.code.gson:gson:2.10.1'         // ManHuaDB
+    implementation 'org.mozilla:rhino:1.7.13'                 // DecryptionUtils 里的 JS 解密脚本
+
+    // 繁简转换，无 Maven 坐标，只能走本地 jar（CopyMH、HotManga 各一处）
+    implementation files('libs/jcc-bate-0.7.3.jar')
+
+    // 不需要显式声明 kotlin-stdlib：Kotlin 插件会自动加。
+    // 也刻意不用 kotlin-stdlib-jdk8 —— 它从 Kotlin 1.8 起已并入 kotlin-stdlib，是个空壳模块。
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+}
+
+test {
+    // 测试输出里有中文（如「通过 42 / 42 个图源」），不指定编码会在 Windows 终端糊成乱码
+    systemProperty 'file.encoding', 'UTF-8'
+
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        showStandardStreams = true
+        exceptionFormat = 'full'
+    }
+}

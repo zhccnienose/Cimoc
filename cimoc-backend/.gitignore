@@ -1,0 +1,16 @@
+build/
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 运行时产物：SQLite 数据库与下载的漫画
+*.db
+*.db-journal
+
+# 必须写成 /download/（锚定模块根）而不是 download/：
+# 后者会连源码包 src/main/kotlin/.../backend/download/ 一起忽略掉，
+# 表现是「DownloadManager / CbzWriter / FileNames 等 6 个文件根本没进版本库」。
+/download/

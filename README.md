@@ -1,101 +1,224 @@
-<img src="./screenshot/icon.png">
+# Cimoc 桌面端
 
-# 应用简介
+原 Cimoc 是一个 Android 在线漫画阅读器。本仓库正在把它改造成**桌面端项目**，前后端分离。
 
-Android 平台在线漫画阅读器  
-Online manga reader based on Android
+- 只做五件事：**收藏**、**检查收藏夹更新**、**多图源搜索**、**下载**、**支持后续添加图源**
+- **不作为阅读器使用**——下载产物是 CBZ，交给第三方漫画阅读器打开
+- **只做后端库**，不做命令行入口；前端是后续工作
 
-[![Build Status](https://travis-ci.com/Haleydu/Cimoc.svg?branch=release-tci)](https://travis-ci.com/github/Haleydu/Cimoc)
-[![codebeat badge](https://codebeat.co/badges/d8389768-fbb1-428b-b02b-5add8317057a)](https://codebeat.co/projects/github-com-haleydu-cimoc-release-tci)
-[![GitHub release](https://img.shields.io/github/release/Haleydu/Cimoc.svg)](https://github.com/Haleydu/Cimoc/releases)
-[![Join the chat at https://gitter.im/Haleydu_Cimoc/community](https://badges.gitter.im/Haleydu_Cimoc/community.svg)](https://gitter.im/Haleydu_Cimoc/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-[![](https://img.shields.io/github/downloads/Haleydu/cimoc/total.svg)](https://github.com/Haleydu/Cimoc/releases)
-[![https://t.me/cimoc_haleydu_Channel](https://img.shields.io/badge/💬%20Telegram-Channel-blue.svg?style=flat-square)](https://t.me/cimoc_haleydu_Channel)
-[![https://t.me/cimoc_haleydu](https://img.shields.io/badge/💬%20Telegram-Group-blue.svg?style=flat-square)](https://t.me/cimoc_haleydu)
+原 Android 的 `app/` 模块已整体移除（提交 `287acca`），仓库里只保留它的资源文件。
 
-# 下载
-> 所有release由`travis-ci`编译发布，如果在release界面某个版本没有apk，那么要么是正在编译，要么就是编译失败了
-> 使用`pre-release`版本会在每次启动时显示检查更新提示。
-> 安卓apk下载地址[软件下载](https://github.com/Haleydu/Cimoc/releases)
+---
 
-# 漫画源
-> 漫画源工作情况可以在[project](https://github.com/Haleydu/Cimoc/projects/1)中进行查看，请尽量不要重复issues
-> 各位大佬们提交漫画源相关issue请按照[模板](https://github.com/Haleydu/Cimoc/issues/new?assignees=&labels=%E6%BC%AB%E7%94%BB%E6%BA%90%E9%97%AE%E9%A2%98&template=comic-source-issues.md&title=%5BCS%5D)填写，方便检查问题。
+## 仓库结构
 
-# 功能简介
-- 翻页阅读（Page Reader）
-- 卷纸阅读（Scroll Reader）
-- 检查漫画更新（Check Manga For Update）
-- 下载漫画（Download Manga）
-- 本地漫画（Local Reader）
-- 本地备份恢复（Local Backup）
-- webdav云备份功能(WebDav Backup)
+```
+Cimoc/
+├── cimoc-core/       纯 JVM 解析层（42 个图源），可独立构建，零 Android 依赖
+├── cimoc-backend/    后端库（Kotlin + 协程），22 个文件 / 约 3000 行
+├── app/              原 Android 模块的残留资源（图标、图片等），无源码
+├── category.py       独立小工具：抓某个图源的分类清单，与后端无关
+├── screenshot/
+├── LICENSE.md
+└── hellovr10.jks     原 Android 签名密钥（见「安全事项」）
+```
 
-# 软件使用说明
-- 安装完成后，直接点击右上角的搜索，即可搜索到漫画
-- 报毒问题已解决
+两个模块各自有 `settings.gradle` 和 `gradlew`，可**独立构建**。`cimoc-backend` 通过 Gradle
+复合构建（`includeBuild('../cimoc-core')`）引用核心层——把 `com.haleydu.cimoc:cimoc-core:0.1.0`
+这个坐标替换成本地构建产物，核心层「零 Android 依赖」这条约束因此不会被 `android.jar` 污染。
 
-# 感谢以下的开源项目及作者
-- [Android Open Source Project](http://source.android.com/)
-- [ButterKnife](https://github.com/JakeWharton/butterknife)
-- [GreenDAO](https://github.com/greenrobot/greenDAO)
-- [OkHttp](https://github.com/square/okhttp)
-- [Fresco](https://github.com/facebook/fresco)
-- [Jsoup](https://github.com/jhy/jsoup)
-- [DiscreteSeekBar](https://github.com/AnderWeb/discreteSeekBar)
-- [RxJava](https://github.com/ReactiveX/RxJava)
-- [RxAndroid](https://github.com/ReactiveX/RxAndroid)
-- [RecyclerViewPager](https://github.com/lsjwzh/RecyclerViewPager)
-- [PhotoDraweeView](https://github.com/ongakuer/PhotoDraweeView)
-- [Rhino](https://github.com/mozilla/rhino)
-- [BlazingChain](https://github.com/tommyettinger/BlazingChain)
-- [AppUpdater](https://gitee.com/jenly1314/AppUpdater)
+---
 
+## 完成进度
 
-# 应用截图
-<img src="./screenshot/01.png" width="250">
+| 部分 | 状态 |
+|---|---|
+| `cimoc-core` 抽取为纯 JVM 模块 | ✅ 完成 |
+| `cimoc-core` 工具链升级到 Gradle 8.7 + JDK 17 + Kotlin 1.9.24 | ✅ 完成 |
+| 移除 Android `app/` 源码与构建体系 | ✅ 完成 |
+| `cimoc-backend` 后端库（五功能） | 🟡 代码写完、编译通过，**真实网络链路只验证了一半** |
+| Compose Desktop 前端 | ⬜ 未开始 |
 
-# 增加图源（欢迎pr）
-- 继承 MangaParser 类，参照 Parser 接口的注释
-> 在app\src\main\java\com\hiroshi\cimoc\source目录里面随便找一个复制一下
-> 注释是这个：app\src\main\java\com\hiroshi\cimoc\parser\MangaParser.java
-- （可选）继承 MangaCategory 类，参照 Category 接口的注释
-> 这个没什么大用的感觉，个人不常用，直接删掉不会有什么影响
-- 在 SourceManger 的 getParser() 方法中加入相应分支
-> case 里面无脑添加
-- 在 UpdateHelper 的 initSource() 方法中初始化图源
+**模块规模**
 
-## cimoc设置
-- 阅读模式－翻页模式-卷纸模式
-- 定义点击事件－左上－上一页，右下下一页
-- 自定义长按点击事件-切换阅读模式
-- 启用快速翻页（减少）
-- 自动裁剪百边
-- 禁止双击放大
-- 启用通知栏
-## boox优化配置
-- dpi－424
-- 字体加粗－
-- a2刷新－打开
-- 动画过滤200
-- 全刷触发20
-- 全屏－关闭
+- `cimoc-core`：76 个 `.java` + 1 个 `.kt`。`source/` 下 47 个文件 —— 40 个入注册表（36 个
+  默认启用），`Locality` / `Null` 与 5 个已注释的空占位类不入表
+- `cimoc-backend`：22 个 `.kt`、约 3000 行。对外只暴露 `CimocBackend` 一个门面，其余按职责分层
+  （`http` / `source` / `engine` / `download` / `storage`），进度通过 `Flow` 上报
 
-# 软件更新方向：
-- 能正常搜索解析网络上大部分免费的漫画
-- 界面简洁为主
-- 解决apk影响体验的问题
+### 近期提交
 
-# 软件服务器
-- 该软件不再需要服务器，完全单机
+```
+a960a27  docs: 重写根 README，记录后端进度、图源健康度与未完成项
+2cd1973  cimoc-backend: 新增后端库（收藏 / 检查更新 / 多源搜索 / 下载 / 图源注册）
+7d2f95e  cimoc-core: 删除 3 个已停站的图源，可用图源 45 → 42
+9204ac1  cimoc-core: 修复 Chuiyao 的 TYPE 冲突与 Tencent 搜索 URL 的 %s
+287acca  清理：移除 Android 应用源码与构建体系，仅保留资源
+47e1bdf  cimoc-core: 工具链升级到 Gradle 8.7 + JDK 17 + Kotlin 1.9.24
+8286aff  cimoc-core: 迁移完成，Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10 验证通过
+```
 
-# 关于淘宝售卖和会员破解
-- 本程序没有任何破解网站VIP的功能，仅仅作为网页浏览器显示网站免费浏览部分，淘宝卖家自行添加的破解或其他功能与本程序无任何关系。
+`upgrade-toolchain` 分支**领先 `release-tci` 6 个提交，且没有 upstream——从未 push 过**。
 
-# 免责声明：
-- 如果更新软件的过程中有什么侵权的地方，请在github上留言或者私信我，提供相关版权证明，会马上删除侵权部分的内容。
-- 所有漫画均来自用户在第三方网站上的手动搜索
+---
 
-# 关注Cimoc微信公众号获取最新版本
-<img src="https://gitee.com/Haleydu/picture/raw/master/qrcode_for_gh_c573e41cd30f_258.jpg" width="250">
-- 需要最新源码的关注公众号获取或在github等不定期的源码公开
+## 数据结构
+
+**不兼容原 Android 数据，全新设计**：原 schema 没有任何索引、没有 `(source, cid)` 唯一约束，
+`Chapter.sourceComic` 还是用 `Long.parseLong(source + "000" + id)` 拼出来的**假外键**。
+这里全部换成真外键 + 真约束。
+
+| 表 | 关键约束 / 用途 |
+|---|---|
+| `setting` | `key TEXT PRIMARY KEY`，通用 KV，取代 SharedPreferences |
+| `source_config` | `type INTEGER PRIMARY KEY`，只存「用户改过哪个图源的开关」，没记录就用代码里的默认值 |
+| `comic` | `UNIQUE(source, cid)`；`favorite_at` 非 NULL 即已收藏；`highlight` 标记有新章节 |
+| `chapter` | `UNIQUE(comic_id, path)` 取代假外键，`ON DELETE CASCADE` |
+| `download_task` | `UNIQUE(chapter_id)`，同一章只有一个任务；`state` / `progress` / `total` / `file_path` |
+
+- `PRAGMA foreign_keys = ON`；迁移用 `PRAGMA user_version`
+- **刻意不建**：`image_url`（CBZ 落盘后图片清单只是任务的临时状态）、`tag`/`tag_ref`
+  （标签不在功能清单里）、`history`（不做阅读器，没有阅读历史）
+- **合成 ID**：`sourceComic = source + "000" + comicRowId`，
+  `chapterId = sourceComic + "000" + index`
+
+---
+
+## 图源注册
+
+反射扫描 `com.haleydu.cimoc.source`，取代原版两处**手写清单**（`SourceManager.getParser` 的
+43 分支 switch、`UpdateHelper.initSource` 的 44 行 `list.add`）。判定条件是「有静态
+`getDefaultSource()` 且返回非 null 的 `MangaParser` 子类」，筛出 **40 个**。
+
+两个必须注意的点：
+
+- **类路径根要同时支持 `file:` 和 `jar:`**，且必须用 `getResources()`（**复数**）——Java 与
+  Kotlin 编译到两个不同的输出目录，`MangaBZ.kt` 落在 Kotlin 那个目录里，单数
+  `getResource()` 会静默漏掉它。踩了这个坑的表现是「开发期一切正常、打包后图源全空」
+- `Chuiyao` 和 `YYLS` 都声明了 `TYPE = 9`。Android 版靠「switch 里不写 `Chuiyao`、注册清单里
+  也不加它」把冲突藏起来——代价是**该源在 Android 版里从来没被注册过**。反射注册会让两者
+  抢号，所以 `Chuiyao` 改用没被占用的 `103`（提交 `9204ac1`）
+
+---
+
+## 下载
+
+CBZ = 每章一个 zip，命名 `<下载根>/<图源标题>/<漫画标题>/<三位序号> <章节标题>.cbz`，
+待下载的临时页放在 `<下载根>/.partial/<章节行号>/`，重启后跳过已下好的页实现续传。
+单页失败默认重试 4 次（原版 20 次过于激进），带线性退避。
+
+CBZ 的内容约定决定第三方阅读器能不能正确翻页，所以这三条是硬要求：
+
+- **条目名零填充**（`001.jpg`、`002.jpg`…）——阅读器普遍按条目名字典序排序，不填充的话
+  `10.jpg` 会排在 `2.jpg` 前面
+- **图片直接放根目录**，不套子目录（部分阅读器不递归查找）
+- 先写 `.part` 再原子改名，中途崩溃留下的是明显的半成品，而不是看起来正常、实际缺页的 CBZ
+
+---
+
+## 未完成
+
+> **口径**：图源的**网络可达性不计入待办**。本机连不上的那批源（超时 / DNS / TLS / reset）
+> 在没有第二套网络环境复测之前判断不了，是环境问题而不是项目工作。下面每条都是
+> 「换一套网络、或者站点自己恢复」之后依然要动手的欠账。
+
+**代码与功能**
+
+1. **Compose Desktop 前端**（未开始）——`CimocBackend` 是唯一入口，`open()` 一次拿到各子系统，
+   收集 `Flow` 驱动界面。这是让项目真正能用的主线，也是唯一完全没动过的一块
+2. **下载出 CBZ 的真实端到端验证**（未做）——「解析章节 → 下图片 → 出 CBZ → 第三方阅读器
+   能打开」只验证了离线部分（打包、命名、目录布局）。它需要一个能返回结果的图源才能跑通，
+   所以挂在第 4 项后面
+3. **补日志绑定**——`org.xerial:sqlite-jdbc` 拉进了 `slf4j-api` 但没有绑定，启动时会打印
+   `SLF4J: Defaulting to no-operation (NOP) logger implementation`。加一个 `logback-classic`
+   即可，同时也补上了原计划里的日志依赖
+
+**图源解析（站点可达、只是解析过期——与网络无关）**
+
+4. **修 4 个「页面 / 接口改版」的源**：`MH57(8)`、`咚漫(11)`、`腾讯动漫(51)`、`漫画台(49)`。
+   其中 **Tencent 的漫画列表由 JS 渲染**，HTML 里的 `comic-item` 其实是 EJS 模板占位符
+   （`<%=localList[i].title%>`），jsoup 命中 0 条——**它要改走腾讯的 JSON 接口，
+   不是改一行选择器**，成本明显高于其余三个
+5. **`漫画柜 IKanman(0)` 的搜索选择器过期**——代码里是 `li.cf` / `a.bcover` / `.book-detail`，
+   当前页面是 `div.cont-list > ul#detail > li`（标题在 `h3`、封面是惰性的 `img[data-src]`、
+   链接 `/comic/60452/`），命中 0 次，搜索会解析出 0 条。**工作区里已有未提交的改动**
+   （顺手删掉了文件末尾那 150 行注释掉的 `Category` 内部类），但选择器还没改
+6. **`Webtoon(6)` Java 侧 `HttpException` 的原因未查明**——curl 直连 200，Java 侧却抛异常，
+   和选择器无关，值得单独查一次
+7. **清掉两个已确认的域名停放源**：`Dmzj(1)`、`QiMiaoMH(56)`（当前状态是「暂留」）
+
+**仓库**
+
+8. **6 个提交还没推**（见「近期提交」）
+9. **`test.html` 与 `test_result/` 未纳入版本控制**——抓图源页面留下的 HTML 转储，
+   要么写进 `.gitignore`，要么删掉
+
+### 图源现状一览
+
+40 个源，本机跑下来**没有一个能返回可用结果**。按可动性分成三类：
+
+- **已删**：`MangaNel(43)` / `Mangakakalot(44)` / `MH50(80)`——域名停放或转卖
+- **站点可达、只是解析过期**：第 4~6 项的那几个，**这才是能动手的**
+- **本机连不上**：26 个（超时 / DNS / TLS / reset，另有 `HHAAZZ(2)` 因 baseurl 未配置根本没
+  发请求）。是下线还是到不了，**没有第二套网络环境复测之前无法区分**，不计入待办
+
+---
+
+## 已知技术债
+
+- **`okhttp 3.12.3` 已停止维护且有已知 CVE**——从原工程继承（`cimoc-core` 的 `api` 依赖），
+  本次不动，但值得排进日程
+- **`fastjson 1.2.83` 在 JDK 17 上有反射风险**（`ManHuaDB` 用它），目前实测没触发，属运气
+- **`CimocCore.install()` 这个静态注入点是过渡设计**——40 个图源类仍静态取
+  `httpClient()` / `settings()`，收口方向是改成构造注入（要动 40 个文件）。由此产生一条
+  **必须遵守的次序**：`install` 必须在任何解析器被构造之前完成（`CimocBackend.open()` 内部
+  保证了这点），副作用是单进程单配置
+- **没有回归测试**（按要求不编写），也没有命令行入口，前端接上后如果某个源解析出的结果不对，
+  只能人工点检
+- **`cimoc-core` 里遗留的两处异常处理问题**（本次未动）：`UicodeBackslashU.unicodeToCn(String)`
+  没有判空，`StringUtils.match` 匹配失败时直接 NPE；`Manga.getResponseBody` 对「连不上」和
+  「HTTP 非 2xx」抛的是同一个 `NetworkErrorException`，排查时分不清是网络问题还是站点返回了错误码
+
+---
+
+## 安全事项
+
+> 这两条是**有意保留**的原版行为，不是疏忽，但代价必须说清楚。
+
+1. **TLS 默认 trust-all**。`HttpClientFactory` 默认装配 trust-all 的 `X509TrustManager` +
+   绕过主机名校验，与原 Android 版行为一致，用来保证图源可用性。
+
+   **代价**：默认状态下客户端不验证服务器证书，**下载内容可被中间人篡改且无法察觉**。
+   这与原版一致，但原版是手机 App，桌面端的使用场景（公共 Wi-Fi、公司网络）不一定相同。
+
+   唯一的安全出口是配置项 `http.strict_tls=true`，置 true 后换成 JDK 默认的 `SSLSocketFactory`
+   与主机名校验。这个开关是**真的接上去的**（在 `CimocBackend.open()` 里读取并作用于客户端
+   构造），不是摆设。注意它只在**启动时读一次**，改这个开关需要重开后端。
+
+2. **仓库里有签名密钥**：`hellovr10.jks` 与 `app/.key.jks` 是被有意保留下来的原 Android
+   签名文件。**删掉文件并不能把它们从 git 历史里移除**。如果这两个密钥还需要继续使用，
+   真正的补救办法是轮换密钥 + 重写历史。
+
+3. 下载的文件与压缩包一律视为不可信数据；`CbzWriter` 只做打包，不做解包。
+
+---
+
+## 开发约定
+
+- 两个模块都需要 **JDK 17**。构建时先设 `JAVA_HOME`：
+
+  ```bash
+  JAVA_HOME="D:/java/java17" ./gradlew build
+  ```
+
+  不设会在**配置阶段**就报 `Cannot find a Java installation matching {languageVersion=17}`
+  —— Windows 注册表里注册的 `D:\java` 只有 `java17` / `java8` 两个子目录、本身没有 java
+  可执行文件，Gradle 的 toolchain 自动探测认不出来。**是探测不到，不是没装**。
+
+  也可以改 `cimoc-backend/gradle.properties` 里的 `org.gradle.java.home`。**不要**写进用户级的
+  `~/.gradle/gradle.properties`——那会影响机器上所有 Gradle 项目，包括同仓库里需要
+  JDK 8/11 的 Android 工程（AGP 4.2.2 会被强制 JDK 17 弄坏）。
+
+- 不要跑 `./gradlew wrapper --gradle-version`，会把 wrapper 里的腾讯镜像冲回官方源（实测会卡死）。
+- 源码含中文注释与中文字符串字面量，`gradle.properties` 里已固定 `-Dfile.encoding=UTF-8`。
+- 详见 [cimoc-core/README.md](cimoc-core/README.md)。

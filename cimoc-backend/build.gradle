@@ -1,0 +1,40 @@
+plugins {
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm' version '1.9.24'
+}
+
+group = 'com.haleydu.cimoc'
+version = '0.1.0'
+
+// 工具链与 cimoc-core 保持一致：Gradle 8.7 + JDK 17 + Kotlin 1.9.24。
+repositories {
+    mavenCentral()
+}
+
+// 一行同时管住 javac 和 kotlinc 的目标版本。
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    // ---- api：CimocBackend 的公开签名里会出现 cimoc-core 的类型
+    //   （Comic / Chapter / Source / Parser / okhttp3.Request），
+    //   前端直接消费这些类型，所以必须是 api 而不是 implementation。
+    //
+    //   这个坐标由 settings.gradle 的 includeBuild 替换成本地 cimoc-core 构建，
+    //   不会去 Maven 上找（也找不到，它从未发布过）。
+    api 'com.haleydu.cimoc:cimoc-core:0.1.0'
+
+    // 并发：多图源搜索的扇出、下载池、进度 Flow 全靠它。
+    // 1.8.1 是能在 Kotlin 1.9.24 上跑的最后一条主线之一；升到 1.9+ 需要先升 Kotlin 2.x。
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+
+    // 持久层。含 Windows x64 原生库，不需要额外装 SQLite。
+    implementation 'org.xerial:sqlite-jdbc:3.46.0.0'
+}
+
+// Kotlin 插件默认只看 src/main/kotlin，这里就是默认值，不用额外配置。
+
+compileJava {
+    options.encoding = 'UTF-8'
+}

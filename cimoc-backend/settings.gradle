@@ -1,0 +1,9 @@
+rootProject.name = 'cimoc-backend'
+
+// 用复合构建（composite build）而不是把 cimoc-core 拉成子模块。
+//
+// cimoc-core 有自己的 settings.gradle 和 gradlew，是个**能独立构建**的工程——
+// 这一点是刻意的（它的 README 明确写过：不和 AGP 同构建，才能保证「零 Android 依赖」
+// 这个约束不被 android.jar 悄悄污染）。includeBuild 让 Gradle 把
+// 'com.haleydu.cimoc:cimoc-core' 这个坐标替换成本地构建产物，同时**不动它一行配置**。
+includeBuild('../cimoc-core')
