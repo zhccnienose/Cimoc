@@ -1,0 +1,5 @@
+rootProject.name = 'cimoc-core'
+
+// 刻意不把 Android 工程（../app）include 进来：
+// cimoc-core 的目标是"零 Android 依赖的纯 JVM 库"，一旦与 AGP 同构建，
+// 就很难保证它不被 android.jar 里的 API 悄悄污染。

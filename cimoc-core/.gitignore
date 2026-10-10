@@ -1,0 +1,9 @@
+build/
+.gradle/
+out/
+out-test/
+
+# IDE
+.idea/
+*.iml
+.vscode/

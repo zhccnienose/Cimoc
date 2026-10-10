@@ -1,0 +1,81 @@
+plugins {
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm' version '1.5.10'
+}
+
+group = 'com.haleydu.cimoc'
+version = '0.1.0'
+
+// 构建组合说明（这几个版本不是随便挑的，改动前请先看 README 的「已知问题」）：
+//   Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10
+// Kotlin 1.5.10 的代码生成阶段在 JDK 17 上会抛后端异常，所以整个构建必须跑在 JDK 8 上。
+// Gradle 6.7.1 与 Kotlin 1.5.10 的组合也和原 Android 工程保持一致，插件已在缓存里。
+repositories {
+    mavenCentral()
+}
+
+// Guava 32+ 开始同时发布 android / standard-jvm 两套 variant，Gradle 6.7.1 没法定夺该选哪个，
+// 解析 compileClasspath 时会直接报「cannot choose between androidApiElements and jreApiElements」。
+// 本模块是纯 JVM 库，显式声明运行环境即可消除歧义。
+// 升级到 Gradle 7+ 之后这段可以删掉。
+configurations.all {
+    attributes {
+        attribute(Attribute.of('org.gradle.jvm.environment', String), 'standard-jvm')
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+// .java 和 .kt 混放在 src/main/java 下（沿用原 Android 工程的目录习惯，迁移时未做文件搬移）。
+// Kotlin 插件默认只看 src/main/kotlin，这里把 java 目录也加进 Kotlin 源集。
+sourceSets {
+    main {
+        kotlin.srcDir 'src/main/java'
+    }
+}
+
+dependencies {
+    // ---- api：这些类型出现在公开签名里，消费方（前端）需要能看到
+    //   okhttp3.Request / Headers / OkHttpClient  → Parser、MangaParser 的返回值与参数
+    //   org.json.JSONException                    → Parser 接口 throws 子句
+    api 'com.squareup.okhttp3:okhttp:3.12.3'
+    api 'org.json:json:20231013'
+
+    // ---- implementation：纯内部实现细节，不外泄
+    implementation 'com.google.guava:guava:33.0.0-jre'        // 11 个文件
+    implementation 'org.jsoup:jsoup:1.17.2'                   // soup/ 层的 HTML 解析
+    implementation 'com.alibaba:fastjson:1.2.83'              // ManHuaDB、MH50
+    implementation 'com.google.code.gson:gson:2.10.1'         // ManHuaDB
+    implementation 'org.mozilla:rhino:1.7.13'                 // DecryptionUtils 里的 JS 解密脚本
+
+    // 繁简转换，无 Maven 坐标，只能走本地 jar（CopyMH、HotManga 各一处）
+    implementation files('libs/jcc-bate-0.7.3.jar')
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+}
+
+compileKotlin {
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+test {
+    // 测试输出里有中文（如「通过 45 / 45 个图源」），不指定编码会在 Windows 终端糊成乱码
+    systemProperty 'file.encoding', 'UTF-8'
+
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        showStandardStreams = true
+        exceptionFormat = 'full'
+    }
+}
