@@ -1,32 +1,24 @@
 plugins {
     id 'java-library'
-    id 'org.jetbrains.kotlin.jvm' version '1.5.10'
+    id 'org.jetbrains.kotlin.jvm' version '1.9.24'
 }
 
 group = 'com.haleydu.cimoc'
 version = '0.1.0'
 
-// 构建组合说明（这几个版本不是随便挑的，改动前请先看 README 的「已知问题」）：
-//   Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10
-// Kotlin 1.5.10 的代码生成阶段在 JDK 17 上会抛后端异常，所以整个构建必须跑在 JDK 8 上。
-// Gradle 6.7.1 与 Kotlin 1.5.10 的组合也和原 Android 工程保持一致，插件已在缓存里。
+// 构建组合：Gradle 8.7 + JDK 17 + Kotlin 1.9.24。
+//
+// 上一版是 Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10。之所以整个构建被锁在 JDK 8 上，是因为
+// Kotlin 1.5.10 的代码生成阶段在 JDK 17 上会抛后端异常（与代码本身无关，是编译器版本问题）。
+// 升到 1.9.24 后该限制解除，工具链可以回到主流版本。
 repositories {
     mavenCentral()
 }
 
-// Guava 32+ 开始同时发布 android / standard-jvm 两套 variant，Gradle 6.7.1 没法定夺该选哪个，
-// 解析 compileClasspath 时会直接报「cannot choose between androidApiElements and jreApiElements」。
-// 本模块是纯 JVM 库，显式声明运行环境即可消除歧义。
-// 升级到 Gradle 7+ 之后这段可以删掉。
-configurations.all {
-    attributes {
-        attribute(Attribute.of('org.gradle.jvm.environment', String), 'standard-jvm')
-    }
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+// 一行同时管住 javac 和 kotlinc 的目标版本。
+// 比分别写 sourceCompatibility + compileKotlin.kotlinOptions.jvmTarget 更不容易漏。
+kotlin {
+    jvmToolchain(17)
 }
 
 // .java 和 .kt 混放在 src/main/java 下（沿用原 Android 工程的目录习惯，迁移时未做文件搬移）。
@@ -54,19 +46,14 @@ dependencies {
     // 繁简转换，无 Maven 坐标，只能走本地 jar（CopyMH、HotManga 各一处）
     implementation files('libs/jcc-bate-0.7.3.jar')
 
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+    // 不需要显式声明 kotlin-stdlib：Kotlin 插件会自动加。
+    // 也刻意不用 kotlin-stdlib-jdk8 —— 它从 Kotlin 1.8 起已并入 kotlin-stdlib，是个空壳模块。
 
     testImplementation 'junit:junit:4.13.2'
 }
 
 compileJava {
     options.encoding = 'UTF-8'
-}
-
-compileKotlin {
-    kotlinOptions {
-        jvmTarget = '1.8'
-    }
 }
 
 test {

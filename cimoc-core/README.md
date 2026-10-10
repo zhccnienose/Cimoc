@@ -68,18 +68,32 @@ src/main/java/
 
 ## 验证
 
+### 工具链
+
+**Gradle 8.7 + JDK 17 + Kotlin 1.9.24**（走 Maven 坐标，只需一次联网拉依赖）。
+
 ### 方式一：Gradle（标准路径，已实测通过）
 
 ```bash
 cd cimoc-core
-JAVA_HOME=/d/java/java8 ./gradlew test
+JAVA_HOME=/d/java/java17 ./gradlew test
 ```
 
-> **必须用 JDK 8 跑这个构建。** Kotlin 1.5.10 的代码生成阶段在 JDK 17 上会抛后端异常，
-> 这跟代码本身无关，是编译器版本问题。如果你的默认 `java` 不是 8，上面的 `JAVA_HOME=`
-> 不能省，或者把 `org.gradle.java.home` 写进 `~/.gradle/gradle.properties`。
+PowerShell 下是：
 
-实测输出：
+```powershell
+$env:JAVA_HOME = "D:\java\java17"
+.\gradlew test
+```
+
+> 如果默认 `java` 不是 17，`JAVA_HOME` 不能省；也可以在 `cimoc-core\gradle.properties`
+> 里取消注释 `org.gradle.java.home`。**但别写进用户级的 `~/.gradle/gradle.properties`**——
+> 那会影响所有 Gradle 项目，包括同仓库的 Android 工程（AGP 4.2.2 需要 JDK 8/11）。
+
+> Gradle 发行包走的是**腾讯镜像**（见 `gradle-wrapper.properties`）。官方源
+> `services.gradle.org` 会 307 跳转到 CDN，实测在那一步会卡死；镜像直连且是完整的 134MB。
+
+实测输出（main 产物 146 个 class，与升级前一致）：
 
 ```
 > Task :compileKotlin
@@ -91,13 +105,10 @@ com.haleydu.cimoc.SourceSmokeTest > disabledStubsStayDisabled PASSED
 BUILD SUCCESSFUL
 ```
 
-两个 Windows 相关的小坑，都已经在构建文件里处理掉了，说明一下免得被误删：
+一个 Windows 相关的小坑，已在构建文件里处理，说明一下免得被误删：
 
-- **Guava 32+ 同时发布 android / standard-jvm 两套 variant**，Gradle 6.7.1 没法定夺，
-  解析 `compileClasspath` 时会直接失败。`build.gradle` 里用
-  `attribute('org.gradle.jvm.environment', 'standard-jvm')` 消除了歧义，升级到 Gradle 7+ 后可删。
-- **测试输出里的中文在控制台显示为乱码**。这是 Gradle 6.7.1 在 Windows 上读取子进程
-  输出时按平台编码（CP936）解码导致的，只影响控制台渲染。`build/reports/tests/test/index.html`
+- **测试输出里的中文在控制台显示为乱码**。这是 Gradle 在 Windows 上读取子进程输出时
+  按平台编码（CP936）解码导致的，只影响控制台渲染。`build/reports/tests/test/index.html`
   里的中文是正常的 UTF-8，以那个为准。
 
 ### 方式二：verify.sh（离线，不依赖 Gradle）
@@ -109,13 +120,12 @@ cd cimoc-core
 ./verify.sh test     # 只跑测试
 ```
 
-依赖 `JDK8_HOME`（默认 `/d/java/java8`）和 Gradle 缓存里的 `kotlin-compiler-embeddable`。
 实测输出：
 
 ```
-==> [1/3] javac: 编译 Java 主源码
+==> [1/3] javac: 编译 Java 主源码  (JDK: /d/java/java17)
     Java 类: 143
-==> [2/3] kotlinc: 编译 Kotlin 主源码
+==> [2/3] kotlinc: 编译 Kotlin 主源码  (Kotlin: 1.9.24)
     Kotlin 类: 3
     合计类: 146
 ==> [3/3] javac: 编译测试源码
@@ -125,11 +135,19 @@ cd cimoc-core
 OK (4 tests)
 ```
 
-> **不要把 `verify.sh` 当成临时脚手架删掉。** 它跑得比 Gradle 快得多，适合做提交前的
-> 快速反馈；而且它能验证「脱离 Gradle 也能构建」，反向确认构建里没有隐式魔法。
+环境变量：`JDK_HOME`（默认 `/d/java/java17`）、`KOTLIN_VERSION`（默认 `1.9.24`，
+需与 `build.gradle` 的插件版本一致）。
 
-`libs/` 目录就是为这条路径准备的离线依赖。Gradle 路径除了 `jcc-bate-0.7.3.jar`
-（繁简转换，无 Maven 坐标）之外不读它，其余依赖走 Maven 坐标。
+它最初是为了绕开「Gradle 下载不下来」而搭的。现在 Gradle 能正常跑了，但它仍有价值：
+**不经过 Gradle 就能确认源码本身是自洽的**，一旦构建出问题，能立刻区分是代码问题还是
+构建配置问题。
+
+Kotlin 工具链的 jar **不放进 `libs/`**，而是按 `KOTLIN_VERSION` 从 Gradle 缓存解析——
+之前 `libs/` 里还留着 1.5.10、而 `build.gradle` 已经升到 1.9.24，就是这种手写同步导致的
+版本漂移。现在升级 Kotlin 只需改一个变量。**前提是至少成功跑过一次 Gradle 构建。**
+
+`libs/` 目录只放第三方依赖，供这条路径离线使用。Gradle 路径除了 `jcc-bate-0.7.3.jar`
+（繁简转换，无 Maven 坐标）之外不读它，其余走 Maven 坐标。
 
 ## 冒烟测试覆盖什么
 
@@ -150,21 +168,26 @@ OK (4 tests)
 
 按处理优先级排列：
 
-1. **构建被锁死在 Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10 这个组合上。**
-   原因是 Kotlin 1.5.10 在 JDK 17 上的代码生成会崩，而这套组合又和原 Android 工程一致
-   （插件都已在缓存里，离线可构建）。代价是整个工具链偏旧，**长期应该整体升到
-   Gradle 8 + Kotlin 1.9 + JDK 17，但那是独立的一件事，别和功能改动混在一起做。**
-2. **okhttp 3.12.3 已停止维护**，带有已知 CVE。这是从原工程原样继承的版本，升级到
+1. **okhttp 3.12.3 已停止维护**，带有已知 CVE。这是从原工程原样继承的版本，升级到
    4.x 需要改动 API（如 `isHttp()` 在 3.12.3 里不存在）。**这是最该优先处理的一项。**
-3. **5 个图源是死占位类**（`ExHentai`、`HHSSEE`、`NHentai`、`Pic177`、`Wnacg`）：
-   整个类体在原工程里就被块注释掉了，形如 `public class ExHentai/* extends MangaParser */ {}`。
-   实际可用图源是 **45 个而不是 50 个**。迁移时原样保留，未擅自删除。
-4. **`CimocCore` 是过渡设计。** 它是个静态持有者（`install(client, settings)` +
+2. **fastjson 1.2.83 是个隐患。** 它大量用反射访问 `java.base` 内部，在 JDK 17 的强封装下
+   迟早会抛 `InaccessibleObjectException`——**本次升级到 JDK 17 后实测没有触发**
+   （受影响的两个图源 `ManHuaDB`、`MH50` 冒烟测试通过），但这是运气而非保证。
+   建议换成 Gson（已经在依赖里，`ManHuaDB` 本来就在同时用两者）。
+3. **`CimocCore` 是过渡设计。** 它是个静态持有者（`install(client, settings)` +
    `httpClient()` / `settings()`），用来顶掉原 `App.getHttpClient()` 之类的静态单例。
    正式版本应改为构造注入或依赖注入容器。见该类的 javadoc。
+4. **5 个图源是死占位类**（`ExHentai`、`HHSSEE`、`NHentai`、`Pic177`、`Wnacg`）：
+   整个类体在原工程里就被块注释掉了，形如 `public class ExHentai/* extends MangaParser */ {}`。
+   实际可用图源是 **45 个而不是 50 个**。迁移时原样保留，未擅自删除。
 5. **GreenDAO 已移除，但持久层还没有替代品。** `ImageUrl.StringConverter` 里的
    `##Cimoc##` 分隔符是**已落盘数据的格式**，新持久层必须沿用，否则旧数据读不回。
 6. **guava 33.0.0-jre 只为 11 个文件引入**，体积偏大，值得评估是否换成标准库。
+
+> 工具链升级（Gradle 6.7.1/JDK 8/Kotlin 1.5.10 → Gradle 8.7/JDK 17/Kotlin 1.9.24）
+> **已于 2026-10-10 完成并验证**。升级前后 main 产物都是 146 个 class，冒烟测试都是 45/45——
+> 类数一致是「升级没有改变语义」最直接的证据。
+
 
 ## 前端集成方式
 
