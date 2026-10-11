@@ -1,0 +1,6 @@
+rootProject.name = 'cimoc-desktop'
+
+// 用复合构建引入后端。和 cimoc-backend 引 cimoc-core 是同一套做法：
+// 三个模块各自能独立构建，靠 includeBuild 把 Maven 坐标替换成本地构建产物，
+// 从而保留「cimoc-core 可独立构建」这个性质（它的 README 明确主张过这点）。
+includeBuild('../cimoc-backend')
