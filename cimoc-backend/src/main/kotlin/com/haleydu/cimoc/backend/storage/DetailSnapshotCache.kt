@@ -9,24 +9,28 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
-/** 缓存文件里存的两样东西：漫画（含简介等字段）与章节目录。 */
-data class CachedFavorite(
+/** 快照文件里存的两样东西：漫画（含简介等字段）与章节目录。 */
+data class CachedDetail(
     val comic: Comic,
     val chapters: List<Chapter>,
 )
 
 /**
- * 收藏的本地缓存：**一本漫画一个 JSON 文件**，放在 `<下载根>/favorite/`。
+ * 详情快照缓存：**一本漫画一个 JSON 文件**，放在传入的那个目录下。
+ *
+ * 同一套机制被两处用，只是目录不同：
+ * - `<下载根>/favorite/`（[FAVORITE_DIR]）——收藏的详情，[com.haleydu.cimoc.backend.engine.FavoriteStore] 维护；
+ * - `<下载根>/.history/`（[HISTORY_DIR]）——浏览过的详情，[com.haleydu.cimoc.backend.engine.HistoryStore] 维护。
+ *
+ * 两边的定位相同：数据库是**权威**（收藏状态、下载任务、章节行号都以它为准），
+ * JSON 是**这份权威的快照**，只用来渲染详情页。各自的增删时机由持有它的那个 Store 决定
+ * （收藏那套是「收藏时写、取消时删」，浏览那套是「没收藏的才写」），这一类只负责读写。
  *
  * ### 为什么数据库里已经有这些字段，还要再存一份 JSON
  *
- * `comic.intro` 和 `chapter` 表里本来就有简介和章节。这份 JSON 是**需求明确要求的**：
- * 收藏夹里点开的详情页要能离线、瞬时打开，不依赖图源当天是否还活着
- * （见 README「图源现状一览」——本机 40 个源里 26 个连不上，能返回章节的只有十来个）。
- *
- * 所以两边的定位不同：数据库是**权威**（收藏状态、下载任务、章节行号都以它为准），
- * JSON 是**这份权威的快照**，只用来渲染详情页。取消收藏时一并删掉——
- * 需求如此，且不删的话文件会随着「收藏又取消」无限堆积。
+ * `comic.intro` 和 `chapter` 表里本来就有简介和章节。这份 JSON 是为了让详情页**不依赖
+ * 图源当天是否还活着**——见 README「图源现状一览」：本机 40 个源里 26 个连不上，
+ * 能返回章节的只有十来个。
  *
  * ### 文件名的编码
  *
@@ -39,9 +43,9 @@ data class CachedFavorite(
  *
  * 不是图源的合成 ID——详情页的「开始下载」要把它交回 [Library]。
  * 收藏期间这行不会被删（`deleteIfOrphan` 只在「没收藏且没下载任务」时动手，
- * `replaceForComic` 只增不删），所以缓存里的行号在整个收藏期间都有效。
+ * `replaceForComic` 只增不删），所以收藏快照里的行号在整个收藏期间都有效。
  */
-class FavoriteCache(private val root: Path) {
+class DetailSnapshotCache(private val root: Path) {
 
     /** 缓存文件路径。文件不存在也返回路径（调用方自己判断）。 */
     fun path(source: Int, cid: String): Path = root.resolve(fileName(source, cid))
@@ -53,7 +57,7 @@ class FavoriteCache(private val root: Path) {
      * 而不是一个截断的新文件——后者下次读会解析失败，等于把用户唯一的离线副本毁了。
      */
     fun write(comic: Comic, chapters: List<Chapter>) {
-        val cid = requireNotNull(comic.cid) { "收藏缓存要求 comic.cid 非空" }
+        val cid = requireNotNull(comic.cid) { "详情快照要求 comic.cid 非空" }
         val text = toJson(comic, chapters).toString(2)
 
         val target = path(comic.source, cid)
@@ -70,7 +74,7 @@ class FavoriteCache(private val root: Path) {
      * **任何异常都返回 null**（文件不在、内容被改坏、版本对不上）——调用方据此退回网络解析。
      * 一个损坏的缓存文件不值得让详情页打不开。
      */
-    fun read(source: Int, cid: String): CachedFavorite? {
+    fun read(source: Int, cid: String): CachedDetail? {
         val file = path(source, cid)
         if (!Files.isRegularFile(file)) return null
 
@@ -108,12 +112,54 @@ class FavoriteCache(private val root: Path) {
             chapter.count = item.optInt("pageCount")
             chapters += chapter
         }
-        return CachedFavorite(comic, chapters)
+        return CachedDetail(comic, chapters)
     }
 
     /** 删除。文件本来就不在也算成功——调用方只关心「删完之后它不在了」。 */
     fun delete(source: Int, cid: String): Boolean =
         runCatching { Files.deleteIfExists(path(source, cid)) }.getOrDefault(false)
+
+    // ---------------------------------------------------------------- 目录级操作
+
+    /**
+     * 清空整个目录，返回删掉的条目数。
+     *
+     * 顺带收拾崩溃残留的 `.part`（[write] 写到一半留下的那些），它们不在正常条目之列，
+     * 但没有理由留着占地方。
+     *
+     * 目录不存在算清空成功（返回 0）：用户从没产生过缓存时点「清空」不该报错。
+     * 阻塞（遍历目录）。前端请在 IO 上调用。
+     */
+    fun clear(): Int {
+        if (!Files.isDirectory(root)) return 0
+        var removed = 0
+        runCatching {
+            Files.newDirectoryStream(root).use { entries ->
+                for (entry in entries) {
+                    val name = entry.fileName.toString()
+                    if (!name.endsWith(FILE_SUFFIX) && !name.endsWith(PART_SUFFIX)) continue
+                    if (Files.deleteIfExists(entry) && name.endsWith(FILE_SUFFIX)) removed += 1
+                }
+            }
+        }
+        return removed
+    }
+
+    /**
+     * 目录占用字节数。目录不存在或读不出来时返回 0。
+     *
+     * 只数正常条目（`*.json`），不算 `.part`——设置页上那个数字要能和「清空」对得上。
+     * 阻塞（遍历目录）。前端请在 IO 上调用。
+     */
+    fun sizeBytes(): Long {
+        if (!Files.isDirectory(root)) return 0
+        return runCatching {
+            Files.newDirectoryStream(root).use { entries ->
+                entries.filter { it.fileName.toString().endsWith(FILE_SUFFIX) }
+                    .sumOf { runCatching { Files.size(it) }.getOrDefault(0L) }
+            }
+        }.getOrDefault(0L)
+    }
 
     // ---------------------------------------------------------------- 内部
 
@@ -175,8 +221,20 @@ class FavoriteCache(private val root: Path) {
 
     companion object {
 
-        /** 缓存目录名：`<下载根>/favorite/`，与 `.cover/`、`.partial/` 同一层级。 */
-        const val DIR = "favorite"
+        /**
+         * 收藏快照的目录名：`<下载根>/favorite/`，与 `.cover/`、`.partial/` 同一层级。
+         *
+         * **这个值不能改**：改了等于把现有用户已经写下的收藏快照全部作废，
+         * 而他们的收藏会因此退回网络——本机十个源倒有七个连不上。
+         */
+        const val FAVORITE_DIR = "favorite"
+
+        /**
+         * 浏览记录的目录名：`<下载根>/.history/`。
+         *
+         * 带点前缀与 `.cover/` 一致，让它和用户自己的下载产物在目录列表里分得开。
+         */
+        const val HISTORY_DIR = ".history"
 
         /**
          * 格式版本。**不匹配就当缓存不存在**，退回网络重新解析。

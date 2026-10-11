@@ -31,7 +31,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.swing.JFileChooser
 import javax.swing.SwingUtilities
@@ -74,10 +76,22 @@ fun SettingsPage() {
     var noticeIsError by remember { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
 
+    // 浏览记录的占用大小。null = 还没算出来（走目录要 IO，第一帧拿不到）。
+    var historyBytes by remember(backend) { mutableStateOf<Long?>(null) }
+    var historyRevision by remember(backend) { mutableStateOf(0) }
+    var clearingHistory by remember(backend) { mutableStateOf(false) }
+
     // 导入之后要把镜像重新对齐到库（导入时被校验拦掉的项，得显示成库里的真实状态，
     // 而不是文件里那个值）。revision +1 就是重新对齐一次，走同一条路。
     LaunchedEffect(backend, revision) {
         SettingsSpec.fields.forEach { values[it.key] = backend.settings.raw(it.key) }
+    }
+
+    // 占用大小要遍历目录，放 IO 上。清空之后靠 historyRevision +1 重算一次。
+    LaunchedEffect(backend, historyRevision) {
+        historyBytes = withContext(Dispatchers.IO) {
+            runCatching { backend.history.sizeBytes() }.getOrDefault(0L)
+        }
     }
 
     /**
@@ -104,6 +118,30 @@ fun SettingsPage() {
                     notice = "「${field.title}」没写进库：${describe(error)}（已改回原样）"
                     noticeIsError = true
                 }
+        }
+    }
+
+    /**
+     * 清空浏览记录。
+     *
+     * 后果要说清楚：这些详情页下次打开会**重新向图源请求**，而图源要是不在了、
+     * 又没收藏，那本就再也打不开了。所以进度通知不是可选的。
+     */
+    fun clearHistory() {
+        clearingHistory = true
+        app.scope.launch {
+            runCatching { backend.history.clear() }
+                .onSuccess { removed ->
+                    // 重算占用。放在这里而不是清空之后同步算——sizeBytes 也是阻塞的
+                    historyRevision += 1
+                    notice = "已清空浏览记录（$removed 本）。这些详情页下次打开会重新向图源请求。"
+                    noticeIsError = false
+                }
+                .onFailure {
+                    notice = "清空浏览记录失败：${describe(it)}"
+                    noticeIsError = true
+                }
+            clearingHistory = false
         }
     }
 
@@ -195,6 +233,20 @@ fun SettingsPage() {
                     )
                 }
             }
+
+            // 浏览记录**不是设置项**，所以它不在 SettingsSpec.fields 里，单独追加一块。
+            //
+            // 做成 SettingField 的话会被导入导出当成一项设置（那两个函数就是按注册表的
+            // key 逐个搬运的），而它既没有 key 也没有存在库里的值——它描述的是磁盘上的目录。
+            // 这一页本来就有不来自注册表的东西（标题行、导入导出按钮、notice）。
+            item(key = "cache-group") { GroupHeader("本地缓存") }
+            item(key = "cache-history") {
+                CacheRow(
+                    bytes = historyBytes,
+                    clearing = clearingHistory,
+                    onClear = { clearHistory() },
+                )
+            }
         }
     }
 }
@@ -207,6 +259,64 @@ private fun GroupHeader(title: String) {
         color = MaterialTheme.colors.primary,
         modifier = Modifier.padding(top = 6.dp),
     )
+}
+
+/**
+ * 「浏览记录」那一行：占用大小 + 「清空」。样式跟着 [SettingRow] 走，但它不是设置项
+ * （没有 key、没有存在库里的值，见上面调用点的说明）。
+ *
+ * [bytes] 为 null 表示大小还没算出来（遍历目录要 IO，第一帧没有）。这时不显示数字，
+ * 也不让点「清空」——写个 0 会被读成「没有缓存」。
+ */
+@Composable
+private fun CacheRow(
+    bytes: Long?,
+    clearing: Boolean,
+    onClear: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colors.onSurface.copy(alpha = 0.05f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("浏览记录", style = MaterialTheme.typography.body1)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "打开过的详情页会存一份本地快照，下次打开先读它，读不到才向图源请求。" +
+                    "图源失效时，看过的漫画仍然打得开。不封顶，需要时在这里清。",
+                style = MaterialTheme.typography.caption,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+            )
+        }
+
+        Spacer(Modifier.width(16.dp))
+
+        Text(
+            text = bytes?.let(::formatSize) ?: "计算中…",
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+        )
+
+        Spacer(Modifier.width(8.dp))
+
+        TextButton(
+            enabled = !clearing && (bytes ?: 0L) > 0,
+            onClick = onClear,
+        ) {
+            Text(if (clearing) "清空中…" else "清空")
+        }
+    }
+}
+
+/** 人类可读的字节数。只做 B / KB / MB 三档——一个浏览记录缓存不会到 GB。 */
+private fun formatSize(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
 }
 
 /** 一行：左边标题 / 说明 / 警示，右边控件。控件按子类分派。 */

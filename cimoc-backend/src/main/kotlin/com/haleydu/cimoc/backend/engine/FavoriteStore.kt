@@ -1,12 +1,14 @@
 package com.haleydu.cimoc.backend.engine
 
-import com.haleydu.cimoc.backend.storage.FavoriteCache
+import com.haleydu.cimoc.backend.storage.DetailSnapshotCache
 import com.haleydu.cimoc.backend.storage.Library
 import com.haleydu.cimoc.model.Chapter
 import com.haleydu.cimoc.model.Comic
 
 /**
- * 收藏夹。数据库那份是权威，另外维护一份「简介 + 章节目录」的 JSON 快照（见 [FavoriteCache]）。
+ * 收藏夹。数据库那份是权威，另外维护一份「简介 + 章节目录」的 JSON 快照
+ * （见 [DetailSnapshotCache]，目录是 `favorite/`；没收藏的那些归
+ * [com.haleydu.cimoc.backend.engine.HistoryStore] 管）。
  *
  * ### 为什么单独一类，而不是直接给前端 [Library]
  *
@@ -21,7 +23,7 @@ import com.haleydu.cimoc.model.Comic
  */
 class FavoriteStore(
     private val library: Library,
-    private val cache: FavoriteCache,
+    private val cache: DetailSnapshotCache,
 ) {
 
     /** 收藏夹，最近收藏的在前。 */

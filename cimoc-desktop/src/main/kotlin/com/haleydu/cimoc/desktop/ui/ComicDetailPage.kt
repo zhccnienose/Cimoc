@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -53,25 +54,30 @@ import kotlinx.coroutines.withContext
  *
  * [com.haleydu.cimoc.backend.engine.ComicEngine.load] 会先把漫画写进 `comic` 表再解析，
  * 因为章节的合成 ID 依赖漫画行号。副作用是**看完不收藏也不下载的漫画会留下孤儿行**。
- * 这里选择接受：本项目没有阅读历史，孤儿行没有任何入口，看不见也就无所谓；
- * 真要清理，`Library.deleteComic(id)` 已经在了。
+ * 这里选择接受，而且现在它们有用了：浏览记录那份快照里的章节行号指着这些行
+ * （见 [com.haleydu.cimoc.backend.engine.HistoryStore]）。真要清理，`Library.deleteComic(id)`
+ * 已经在了——但清掉之后对应的浏览记录也就失效了。
  *
  * ### 章节的 id 是数据库行号
  *
  * 不是图源那套合成 ID——`ChapterDao` 在出去给图源时才会换。多选和下载用的都是行号。
  *
- * ### [fromCache]
+ * ### 打开时先查本地，查不到才发请求
  *
- * 从收藏夹进来时传 true：**先读本地 JSON 快照**（简介 + 章节目录），读到了就不发网络请求。
- * 这是需求要的行为，也是这个项目唯一可行的做法——本机 40 个图源里能返回章节的只有十来个，
- * 收藏夹点开一本漫画失败是常态。代价是收藏之后图源新增的章节在这里看不到，
- * 要靠「更新」页去发现。
+ * 顺序是**收藏快照 → 浏览记录 → 网络**（前两个见
+ * [com.haleydu.cimoc.backend.storage.DetailSnapshotCache]）。这么排的理由很实际：
+ * 本机 40 个图源里能返回章节的只有十来个，图源今天连不上、那本漫画就打不开是常态；
+ * 而这些内容我们其实都已经拿到过。顺带也省掉了大量的重复请求。
  *
- * 缓存缺失或损坏时退回网络解析，并顺手把结果补进缓存，所以「收藏时详情还没解析出来」
- * 这种情况会自愈。
+ * 代价是**缓存会过时**：命中时看不到图源后来加的章节，也没有 TTL、不做后台静默刷新
+ * （后台刷等于「打开一本漫画顺带打一次全站」，正是要减少的东西）。所以命中时页面上有
+ * 一个「重新拉取」按钮，想拿最新章节自己点一下。
+ *
+ * 缓存缺失或损坏时退回网络解析，并顺手把结果补进对应的缓存，所以「收藏时详情还没解析
+ * 出来」这种情况会自愈。
  */
 @Composable
-fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false) {
+fun ComicDetailPage(comic: Comic, onBack: () -> Unit) {
     val app = LocalApp.current
 
     // 用 source/cid 而不是 comic 对象当 key：Comic.equals 在 id 为 null 时直接 NPE
@@ -83,9 +89,13 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
     var noticeIsError by remember(comic.source, comic.cid) { mutableStateOf(false) }
     var favorited by remember(comic.source, comic.cid) { mutableStateOf(false) }
     var usedCache by remember(comic.source, comic.cid) { mutableStateOf(false) }
+
+    /** 点一次「重新拉取」+1，让下面那个 effect 重跑一轮、且这一轮跳过缓存。 */
+    var revision by remember(comic.source, comic.cid) { mutableStateOf(0) }
+
     val cid = comic.cid ?: ""
 
-    LaunchedEffect(comic.source, comic.cid) {
+    LaunchedEffect(comic.source, comic.cid, revision) {
         loading = true
         error = null
         var readFromCache = false
@@ -94,15 +104,25 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
             Result.success(
                 // 读 JSON、查库、解析详情全是阻塞的，LaunchedEffect 跑在组合线程上
                 withContext(Dispatchers.IO) {
-                    val cached = if (fromCache) app.backend.favorites.cached(comic.source, cid) else null
+                    // revision > 0 表示用户点了「重新拉取」：这一轮直接打网络，
+                    // 否则点一下只会在两级缓存里绕一圈，什么都不会变
+                    val cached = if (revision == 0) {
+                        app.backend.favorites.cached(comic.source, cid)
+                            ?: app.backend.history.cached(comic.source, cid)
+                    } else {
+                        null
+                    }
+
                     if (cached != null) {
                         readFromCache = true
                         cached
                     } else {
                         app.backend.comic.load(comic).also {
-                            // 收藏着的漫画，顺手把这次的详情刷进快照：收藏那会儿
+                            // 收藏着的漫画，顺手把这次的详情刷进收藏快照：收藏那会儿
                             // 详情可能还没解析出来，不快照的话这个缓存一辈子是空的
                             app.backend.favorites.refreshCacheIfFavorite(it)
+                            // 没收藏的进浏览记录（这条规则收在 record 里，这里无条件调）
+                            app.backend.history.record(it)
                         }
                     }
                 },
@@ -113,8 +133,25 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
             Result.failure(e)
         }
 
-        result.onSuccess { detail = it }.onFailure { error = it }
-        usedCache = readFromCache
+        result
+            .onSuccess {
+                detail = it
+                // 只在成功时更新，失败时保留上一轮的判断（见下面 onFailure）
+                usedCache = readFromCache
+            }
+            .onFailure { failure ->
+                // 已经画着内容的时候（点「重新拉取」失败），**不能**把内容换成错误页：
+                // error 只在 detail == null 时才渲染，这里设了也没人看，而上一句
+                // 「清空 error」已经把界面留在了旧内容上。所以错误走底部那行 notice，
+                // 缓存标注和「重新拉取」按钮都留在原地，用户还能再点一次。
+                if (detail == null) {
+                    error = failure
+                } else {
+                    notice = "重新拉取失败：${describe(failure)}"
+                    noticeIsError = true
+                }
+            }
+
         // 收藏状态单独查库：详情解析失败时也要能显示成「已收藏」
         favorited = withContext(Dispatchers.IO) {
             runCatching { app.backend.favorites.isFavorite(comic.source, cid) }.getOrDefault(false)
@@ -171,23 +208,38 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            // 说清楚这页为什么没转圈就出来了：内容来自收藏时写的快照，不是刚解析的
+            // 说清楚这页为什么没转圈就出来了：内容来自本地快照，不是刚解析的。
+            // 顺带给一个主动刷新的入口——缓存不做 TTL，没有这个按钮，图源后来加的章节
+            // 在这页上就永远看不见了。
             if (usedCache) {
                 Text(
                     "来自本地缓存",
                     style = MaterialTheme.typography.caption,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                 )
+                Spacer(Modifier.width(8.dp))
+                if (loading) {
+                    // 刷新中：只在标题行转，不把正文换成整页的转圈（见下面 when 的判据）
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                OutlinedButton(enabled = !loading, onClick = { revision += 1 }) {
+                    Text(if (loading) "拉取中…" else "重新拉取")
+                }
             }
         }
 
         Spacer(Modifier.height(8.dp))
 
+        // 判据是「还没有内容可画」而不是 loading：点「重新拉取」时 loading 也是 true，
+        // 而那时候正文必须留在屏幕上，只让标题行转个小圈（否则刷新一下整页就空了，
+        // 正好和「显示缓存内容 + 重新拉取」的做法相反）
         val loaded = detail
         when {
-            loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.height(28.dp), strokeWidth = 3.dp)
-            }
+            loaded == null && loading ->
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.height(28.dp), strokeWidth = 3.dp)
+                }
 
             // weight 在调用点给：ColumnScope 只在这里可见
             loaded == null -> LoadFailure(comic, error, Modifier.fillMaxWidth().weight(1f))

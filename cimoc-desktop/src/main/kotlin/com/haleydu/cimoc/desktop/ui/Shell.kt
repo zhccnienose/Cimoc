@@ -80,12 +80,19 @@ fun App(holder: AppHolder) {
 
 @Composable
 private fun Shell(holder: AppHolder, backend: CimocBackend) {
+    val app = LocalApp.current
+
     var section by remember { mutableStateOf(Section.SEARCH) }
     var sources by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     // 图源页动过开关就 +1，让下面那个 LaunchedEffect 重跑一遍。
     // 不把这份计数交给图源页维护：它只在自己可见时存在，而导航栏这行是一直显示的。
     var sourcesRevision by remember { mutableStateOf(0) }
     val unfinished by holder.unfinishedTasks.collectAsState()
+
+    // 搜索会话挂在这一层，不挂在搜索页里。Shell 一旦进入 Ready 就再也不会离开组合
+    // （_state 只在 AppHolder.start() 里被赋成 Ready，之后没人动），所以这一句能稳稳
+    // 跨过所有切页。放在搜索页里的话，切走 = 从组合里摘掉 = 结果连同关键字一起作废。
+    val search = remember(app) { SearchSession(app) }
 
     // 读图源清单是阻塞的（查开关要走 SQLite），放 IO 上。
     // 一次性读取用 withContext 就够；要持续收集的 Flow 请用 LocalApp.current.scope。
@@ -112,9 +119,10 @@ private fun Shell(holder: AppHolder, backend: CimocBackend) {
         )
         Box(Modifier.fillMaxHeight().weight(1f)) {
             when (section) {
-                Section.SEARCH -> SearchPage()
+                Section.SEARCH -> SearchPage(search)
                 // 更新检查的状态与触发都挂在 holder 上：这个页面来回切走时，
-                // 检查还在跑（见 UpdateCheckState），进度不该跟着页面一起消失
+                // 检查还在跑（见 UpdateCheckState），进度不该跟着页面一起消失。
+                // 搜索同理，会话挂在上面那个 search 上（见 SearchSession）
                 Section.FAVORITE -> FavoritesPage(
                     updateCheck = holder.updateCheck,
                     onCheckUpdates = { holder.checkForUpdates() },

@@ -4,6 +4,7 @@ import com.haleydu.cimoc.backend.download.DownloadLayout
 import com.haleydu.cimoc.backend.download.DownloadManager
 import com.haleydu.cimoc.backend.engine.ComicEngine
 import com.haleydu.cimoc.backend.engine.FavoriteStore
+import com.haleydu.cimoc.backend.engine.HistoryStore
 import com.haleydu.cimoc.backend.engine.SearchEngine
 import com.haleydu.cimoc.backend.engine.UpdateChecker
 import com.haleydu.cimoc.backend.http.CoverLoader
@@ -15,7 +16,7 @@ import com.haleydu.cimoc.backend.source.SourceRegistry
 import com.haleydu.cimoc.backend.storage.AppSettings
 import com.haleydu.cimoc.backend.storage.Database
 import com.haleydu.cimoc.backend.storage.Defaults
-import com.haleydu.cimoc.backend.storage.FavoriteCache
+import com.haleydu.cimoc.backend.storage.DetailSnapshotCache
 import com.haleydu.cimoc.backend.storage.Keys
 import com.haleydu.cimoc.backend.storage.Library
 import com.haleydu.cimoc.core.CimocCore
@@ -46,6 +47,8 @@ class CimocBackend private constructor(
     val books: Library,
     /** 收藏夹门面：数据库那份 + 简介/章节目录的 JSON 快照，两个存储一起维护。 */
     val favorites: FavoriteStore,
+    /** 浏览记录：没收藏的漫画访问过就存一份详情快照，详情页优先读它。 */
+    val history: HistoryStore,
     /** 图源注册表（反射扫描的结果）。 */
     val registry: SourceRegistry,
     /** 按 type 取解析器、读写图源开关。 */
@@ -131,7 +134,14 @@ class CimocBackend private constructor(
                     database = db,
                     settings = settings,
                     books = books,
-                    favorites = FavoriteStore(books, FavoriteCache(root.resolve(FavoriteCache.DIR))),
+                    favorites = FavoriteStore(
+                        books,
+                        DetailSnapshotCache(root.resolve(DetailSnapshotCache.FAVORITE_DIR)),
+                    ),
+                    history = HistoryStore(
+                        books,
+                        DetailSnapshotCache(root.resolve(DetailSnapshotCache.HISTORY_DIR)),
+                    ),
                     registry = registry,
                     parsers = parsers,
                     search = SearchEngine(registry, parsers, http, settings),

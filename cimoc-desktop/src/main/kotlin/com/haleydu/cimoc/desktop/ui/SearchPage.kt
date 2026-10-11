@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -28,11 +27,6 @@ import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,17 +39,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.haleydu.cimoc.backend.engine.SearchEvent
 import com.haleydu.cimoc.model.Comic
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 
 /**
  * 搜索页：顶部搜索框，下面是结果网格，点封面进详情。
  *
- * ### 状态为什么全在这里
+ * ### 状态都在 [SearchSession] 里，不在这里
  *
- * 搜索结果是一次性的会话状态（换关键字就全丢），没有别的页面要用它，所以不往上提。
- * 切到别的导航项时本页会被整个销毁、结果随之丢失——这是刻意的取舍，不是为了省事：
- * 把六个页面的状态全部常驻，就得让它们即使不可见也不断后台加载（详情页会发网络请求）。
+ * 本页只负责画，一个字都不 `remember` 在自己身上。原因见 [SearchSession] 的说明：
+ * [Shell] 切页时会把本页从组合里摘掉，状态放在这里就会连同搜索结果一起没。
  *
  * ### 结果网格的 key 用 "source:cid"
  *
@@ -64,98 +55,47 @@ import kotlinx.coroutines.launch
  * 它也没重写 `hashCode`，放进 Set 里本来就是错的。
  */
 @Composable
-fun SearchPage() {
-    val app = LocalApp.current
-
-    var keyword by remember { mutableStateOf("") }
-    val results = remember { mutableStateListOf<Comic>() }
-    val gridState = rememberLazyGridState()
-
-    var running by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
-    var doneCount by remember { mutableStateOf(0) }
-    var totalCount by remember { mutableStateOf(0) }
-    var failures by remember { mutableStateOf<List<SearchEvent.SourceFailed>>(emptyList()) }
-    var failuresShown by remember { mutableStateOf(false) }
-
-    var opened by remember { mutableStateOf<Comic?>(null) }
-    // 当前这次搜索的编号。用编号而不是「running 就拒绝」：用户想换关键字重搜时应当立刻
-    // 响应，而不是等上一次跑完；而旧协程被 cancel 后还是会走到 finally，没有编号的话
-    // 它会把新一轮的 running 抹掉。
-    var generation by remember { mutableStateOf(0) }
-    var job by remember { mutableStateOf<Job?>(null) }
-
-    val submit: () -> Unit = {
-        val trimmed = keyword.trim()
-        if (trimmed.isNotEmpty()) {
-            job?.cancel()
-            results.clear()
-            failures = emptyList()
-            failuresShown = false
-            doneCount = 0
-            totalCount = 0
-            running = true
-            searched = true
-
-            val mine = generation + 1
-            generation = mine
-
-            // 跑在 AppHolder 的 IO scope 上。search() 的 channelFlow 内部用阻塞 DAO，
-            // 且它逐条产出、跨几十个图源，这里 collect 会持续很久。
-            job = app.scope.launch {
-                // 分母。enabledSources() 每源一次 SQLite 查询，所以放 IO 上做。
-                totalCount = runCatching { app.backend.enabledSources().size }.getOrDefault(0)
-                try {
-                    app.backend.search.search(trimmed, page = 1).collect { event ->
-                        when (event) {
-                            is SearchEvent.Found -> results.add(event.comic)
-                            is SearchEvent.SourceDone -> doneCount += 1
-                            // 不弹窗：当前 40 个源里 26 个在本机连不上，弹窗会弹 26 次。
-                            // 收进底部的可折叠区域，默认收起。
-                            is SearchEvent.SourceFailed -> failures = failures + event
-                            is SearchEvent.AllDone -> Unit
-                        }
-                    }
-                } finally {
-                    if (generation == mine) running = false
-                }
-            }
-        }
-    }
-
+fun SearchPage(session: SearchSession) {
     // 新的一轮搜索开始时回到顶部。
     //
-    // **必须挂在这里、不能写进上面那个 IO 协程**：scrollToItem 会让 LazyGrid 立刻
+    // 判据是 pendingScroll 而不是 `generation > 0`：LaunchedEffect 在首次组合时也会跑一次，
+    // 而 generation 现在活得比页面久，切回来时它还是上次的值，拿它当条件就会每切一次页
+    // 都把滚动位置顶掉——那正好抵消了把 gridState 放进会话的意义。
+    //
+    // **必须挂在页面里、不能搬进 SearchSession.start()**：scrollToItem 会让 LazyGrid 立刻
     // forceRemeasure，而 measure/layout 只能在 UI 线程上跑，在 IO 线程调用会抛
     // 「Detected multithreaded access to SnapshotStateObserver」并**把整个搜索协程打死**
     // （异常发生在 collect 之前，结果是一条都收不到）。LaunchedEffect 跑在组合的
     // 线程上，也就是 UI 线程。
-    LaunchedEffect(generation) {
-        if (generation > 0) gridState.scrollToItem(0)
+    LaunchedEffect(session.generation) {
+        if (session.pendingScroll) {
+            session.gridState.scrollToItem(0)
+            session.pendingScroll = false
+        }
     }
 
-    val detailComic = opened
+    val detailComic = session.opened
     if (detailComic != null) {
-        ComicDetailPage(detailComic, onBack = { opened = null })
+        ComicDetailPage(detailComic, onBack = { session.opened = null })
         return
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         SearchBar(
-            keyword = keyword,
-            onKeywordChange = { keyword = it },
-            onSubmit = submit,
+            keyword = session.keyword,
+            onKeywordChange = { session.keyword = it },
+            onSubmit = session::start,
         )
 
         Spacer(Modifier.height(10.dp))
 
         StatusLine(
-            searched = searched,
-            running = running,
-            done = doneCount,
-            total = totalCount,
-            found = results.size,
-            failed = failures.size,
+            searched = session.searched,
+            running = session.running,
+            done = session.doneCount,
+            total = session.totalCount,
+            found = session.results.size,
+            failed = session.failures.size,
         )
 
         Spacer(Modifier.height(8.dp))
@@ -163,24 +103,24 @@ fun SearchPage() {
         Box(Modifier.fillMaxWidth().weight(1f)) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(COLUMNS),
-                state = gridState,
+                state = session.gridState,
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(
-                    items = results,
+                    items = session.results,
                     key = { "${it.source}:${it.cid}" },
                 ) { comic ->
-                    ResultCell(comic) { opened = comic }
+                    ResultCell(comic) { session.opened = comic }
                 }
             }
 
-            if (!running && results.isEmpty()) {
+            if (!session.running && session.results.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = when {
-                            !searched -> "输入关键字，回车或点「搜索」开始"
+                            !session.searched -> "输入关键字，回车或点「搜索」开始"
                             else -> "没有结果。可以换个关键字，或在「图源」里换一批源再试。"
                         },
                         style = MaterialTheme.typography.body2,
@@ -190,12 +130,12 @@ fun SearchPage() {
             }
         }
 
-        if (failures.isNotEmpty()) {
+        if (session.failures.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             FailureSection(
-                failures = failures,
-                expanded = failuresShown,
-                onToggle = { failuresShown = !failuresShown },
+                failures = session.failures,
+                expanded = session.failuresShown,
+                onToggle = { session.failuresShown = !session.failuresShown },
             )
         }
     }

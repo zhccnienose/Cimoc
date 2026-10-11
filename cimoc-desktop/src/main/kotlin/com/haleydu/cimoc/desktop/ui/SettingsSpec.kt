@@ -162,7 +162,7 @@ object SettingsSpec {
             key = Keys.STORAGE_ROOT,
             title = "下载目录",
             group = "存储",
-            detail = "漫画成品、封面缓存、收藏快照都放在这里。留空表示放在数据目录下的 download/。",
+            detail = "漫画成品、封面缓存、收藏快照、浏览记录都放在这里。留空表示放在数据目录下的 download/。",
             restartRequired = true,
         ),
 

@@ -60,8 +60,8 @@ import kotlinx.coroutines.withContext
  *
  * ### 点开的是缓存，不是网络
  *
- * [ComicDetailPage] 的 `fromCache = true`：详情用收藏时写下的 JSON 快照。
- * 见 [com.haleydu.cimoc.backend.storage.FavoriteCache] 与详情页的注释。
+ * 详情页统一先查本地快照（收藏那份 → 浏览记录 → 网络），收藏夹进来的这些必定命中
+ * 收藏那份。见 [com.haleydu.cimoc.backend.storage.DetailSnapshotCache] 与详情页的注释。
  *
  * ### 更新检查挂在这一页上
  *
@@ -128,7 +128,6 @@ fun FavoritesPage(
                 // 详情页可能刚取消过收藏，回来必须重读
                 revision += 1
             },
-            fromCache = true,
         )
         return
     }
