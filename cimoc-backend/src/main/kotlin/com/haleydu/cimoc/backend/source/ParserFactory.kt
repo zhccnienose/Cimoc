@@ -1,8 +1,8 @@
 package com.haleydu.cimoc.backend.source
 
+import com.haleydu.cimoc.backend.storage.AppSettings
 import com.haleydu.cimoc.backend.storage.Keys
 import com.haleydu.cimoc.backend.storage.dao.SourceConfigDao
-import com.haleydu.cimoc.core.CimocCore
 import com.haleydu.cimoc.model.Source
 import com.haleydu.cimoc.parser.MangaParser
 
@@ -26,13 +26,20 @@ import com.haleydu.cimoc.parser.MangaParser
  * ### 前置条件
  *
  * 部分解析器（如 `HHAAZZ`）在**构造函数**里读 `settings()`，因此
- * [CimocCore.install] 必须在第一个解析器被创建之前调用过。`CimocBackend.open()` 负责这个次序。
+ * [com.haleydu.cimoc.core.CimocCore.install] 必须在第一个解析器被创建之前调用过。
+ * `CimocBackend.open()` 负责这个次序。
  */
 class ParserFactory(
     private val registry: SourceRegistry,
     private val config: SourceConfigDao,
-    /** 只用来回答「这个图源必需的配置项填了没有」。窄接口，与解析器拿到的是同一个。 */
-    private val settings: CimocCore.Settings,
+    /**
+     * 图源配置。
+     *
+     * 声明成 [AppSettings] 而不是解析器拿到的那个窄接口 `CimocCore.Settings`（只有
+     * `getString`）：图源顺序要**写**回配置，窄接口写不了。解析器侧不受影响——它们
+     * 仍然只通过 `MangaParser.settings()` 拿到窄接口，宽的是本类自己。
+     */
+    private val settings: AppSettings,
 ) {
 
     /**
@@ -85,15 +92,70 @@ class ParserFactory(
         config.setEnabled(type, enabled)
     }
 
-    /** 启用中的图源清单，多图源搜索用。按 type 升序，保证结果顺序稳定。 */
+    /**
+     * 启用中的图源清单，多图源搜索用。顺序同 [setOrder]。
+     *
+     * 这个顺序**不影响搜索结果的排列**：`SearchEngine` 是并发跑所有源、谁先返回谁先到，
+     * 界面收到的是交错的事件流。这里跟着排序只是让「图源顺序」在整条链路上是同一个概念。
+     */
     fun enabledSources(): List<SourceInfo> =
-        registry.all.filter { enabled(it.type) }
+        byOrder(registry.all.filter { enabled(it.type) })
 
-    /** 全部图源及其当前开关，设置界面用。 */
-    fun listSources(): List<SourceInfo> = registry.all
+    /** 全部图源及其当前开关，设置界面用。顺序同 [setOrder]。 */
+    fun listSources(): List<SourceInfo> = byOrder(registry.all)
 
     /** 图源标题。未知 type 返回 null。 */
     fun title(type: Int): String? = registry.byType(type)?.title
+
+    // ---------------------------------------------------------------- 顺序
+
+    /**
+     * 用户在图源页拖出来的顺序。
+     *
+     * 返回空列表表示没设置过，调用方应当退回 type 升序（即 [SourceRegistry] 的默认顺序）。
+     *
+     * 只读内存缓存（[AppSettings.raw]），不阻塞，可以在组合里直接读。
+     */
+    fun order(): List<Int> = settings.getString(Keys.SOURCE_ORDER, "")
+        .split(',')
+        .mapNotNull { it.trim().toIntOrNull() }
+
+    /**
+     * 保存顺序。**传空列表表示恢复默认**——[AppSettings.put] 收到 null 是删掉这一行，
+     * 而不是存一个空串，所以「从没设置过」和「拖乱了想回到默认」是同一个状态。
+     *
+     * 阻塞（写 SQLite），前端请在 IO 上调用。
+     */
+    fun setOrder(types: List<Int>) {
+        // 顺手把不认识的 type 和重复项滤掉：写进去的字符串是给 [byOrder] 读的，
+        // 存垃圾进去只会让它越来越长，没有任何意义
+        val clean = types.distinct().filter { registry.byType(it) != null }
+        settings.put(
+            Keys.SOURCE_ORDER,
+            clean.takeIf { it.isNotEmpty() }?.joinToString(","),
+        )
+    }
+
+    /**
+     * 按用户顺序重排。
+     *
+     * 分两段：先按存的顺序取出还存在的图源（存过的重复 type 只认第一次，已下架的跳过），
+     * 再把没存过的接在后面。**尾巴不用再排序**——[registry.all] 本身就是 type 升序
+     * （`SourceRegistry.scan` 里排过），新图源因此总是出现在末尾。
+     */
+    private fun byOrder(all: List<SourceInfo>): List<SourceInfo> {
+        val saved = order()
+        if (saved.isEmpty()) return all
+
+        val byType = all.associateBy { it.type }
+        val head = ArrayList<SourceInfo>(all.size)
+        val placed = HashSet<Int>()
+        for (type in saved) {
+            val info = byType[type] ?: continue
+            if (placed.add(type)) head += info
+        }
+        return head + all.filter { it.type !in placed }
+    }
 
     // ------------------------------------------------------------ 配置缺失
 

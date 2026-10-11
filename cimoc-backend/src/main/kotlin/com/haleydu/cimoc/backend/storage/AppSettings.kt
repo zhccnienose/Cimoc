@@ -47,6 +47,18 @@ object Keys {
      */
     const val FAVORITE_TITLE_SIZE = "ui.favorite.title_size"
 
+    /**
+     * 图源页里用户拖出来的顺序。逗号分隔的 type 列表，如 `"2,5,1,9"`。
+     *
+     * 不存在或为空 = 按 type 升序，即 [com.haleydu.cimoc.backend.source.SourceRegistry] 的默认顺序。
+     * 存过的 type 里已经不存在的会被忽略，没存过的（新增图源）一律追加到末尾——
+     * 所以新增图源不需要任何迁移代码。
+     *
+     * 这一项**不注册进前端的 `SettingsSpec`**（同 `check.update.last`）：它不是给人填的，
+     * 也不该跟着导入导出走。它不存在时既不影响设置页渲染，也不影响导入。
+     */
+    const val SOURCE_ORDER = "source.order"
+
     // ---- 以下 key 由图源类自己读取，原样沿用 Android 版的字符串值，不做映射。
     //      改这些值等于改变图源行为，改动前先看对应图源类的实现。
 
