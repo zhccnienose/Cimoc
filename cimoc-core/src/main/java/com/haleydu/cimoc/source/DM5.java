@@ -51,15 +51,23 @@ public class DM5 extends MangaParser {
         return new Source(null, DEFAULT_TITLE, TYPE, true);
     }
 
+    /**
+     * 站内地址必须写 https。
+     *
+     * <p>站点已把全部 http 请求 301 到 https，而搜索是 POST——OkHttp 跟随 301 时会把
+     * POST 改写成 GET 并**丢掉请求体**（浏览器的老规矩）。结果是搜索条件根本没送到服务器，
+     * 对端返回 200 + 空 body，{@link #getSearchIterator} 拿到空串，`new JSONArray("")`
+     * 抛异常后被吞掉，于是这个源搜索永远是 0 条、且不报错。
+     */
     @Override
     public Request getSearchRequest(String keyword, int page) {
-        String url = "http://m.dm5.com/pagerdata.ashx";
+        String url = "https://m.dm5.com/pagerdata.ashx";
         RequestBody body = new FormBody.Builder()
                 .add("t", "7")
                 .add("pageindex", String.valueOf(page))
                 .add("title", keyword)
                 .build();
-        return new Request.Builder().url(url).post(body).addHeader("Referer", "http://m.dm5.com").build();
+        return new Request.Builder().url(url).post(body).addHeader("Referer", "https://m.dm5.com").build();
     }
 
     @Override
@@ -92,7 +100,7 @@ public class DM5 extends MangaParser {
 
     @Override
     public String getUrl(String cid) {
-        return "http://www.dm5.com/".concat(cid);
+        return "https://www.dm5.com/".concat(cid);
     }
 
     @Override
@@ -105,7 +113,7 @@ public class DM5 extends MangaParser {
 
     @Override
     public Request getInfoRequest(String cid) {
-        String url = "http://www.dm5.com/".concat(cid);
+        String url = "https://www.dm5.com/".concat(cid);
         return new Request.Builder().url(url).build();
     }
 
@@ -161,10 +169,10 @@ public class DM5 extends MangaParser {
 
     @Override
     public Request getImagesRequest(String cid, String path) {
-        String url = "http://m.dm5.com/".concat(path);
+        String url = "https://m.dm5.com/".concat(path);
         return new Request
                 .Builder()
-                .addHeader("Referer", StringUtils.format("http://m.dm5.com/%s", path))
+                .addHeader("Referer", StringUtils.format("https://m.dm5.com/%s", path))
                 .url(url).build();
     }
 
@@ -174,15 +182,23 @@ public class DM5 extends MangaParser {
         String str = StringUtils.match("eval\\(.*\\)", html, 0);
         if (str != null) {
             try {
-                str = DecryptionUtils.evalDecrypt(str, "newImgs");
-                if (str.equals("")) {
-                    str = DecryptionUtils.evalDecrypt(str);
+                // 正常情况下脚本里就是一个 newImgs 数组，取这个变量的值即可。
+                // 取不到才退回执行整段脚本——降级时喂进去的必须是**原始的** str：
+                // 这里原先是把 evalDecrypt 的结果又当成 jsCode 传了一遍，而那一轮的结果
+                // 要么是空串、要么是无法求值时的占位串，再解一次得到的还是它自己，降级等于没写。
+                String result = DecryptionUtils.evalDecrypt(str, "newImgs");
+                if (!isImageList(result)) {
+                    result = DecryptionUtils.evalDecrypt(str);
                 }
-                String[] array = str.split(",");
-                for (int i = 0; i != array.length; ++i) {
-                    Long comicChapter = chapter.getId();
-                    Long id = Long.parseLong(comicChapter + "000" + i);
-                    list.add(new ImageUrl(id, comicChapter, i + 1, array[i], false));
+                // 两条路都没解出地址串（页面结构又变了）就当这章没有图片，不要拿
+                // "undefined"、Rhino 的 NOT_FOUND 这类占位串去 split 出一个假地址。
+                if (isImageList(result)) {
+                    String[] array = result.split(",");
+                    for (int i = 0; i != array.length; ++i) {
+                        Long comicChapter = chapter.getId();
+                        Long id = Long.parseLong(comicChapter + "000" + i);
+                        list.add(new ImageUrl(id, comicChapter, i + 1, array[i], false));
+                    }
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -191,10 +207,15 @@ public class DM5 extends MangaParser {
         return list;
     }
 
+    /** 解密结果是不是一串图片地址（newImgs 解出来是逗号分隔的 http(s) 绝对地址）。 */
+    private static boolean isImageList(String str) {
+        return !StringUtils.isEmpty(str) && (str.startsWith("http") || str.startsWith("//"));
+    }
+
     @Override
     public Request getLazyRequest(String url) {
         return new Request.Builder().url(url)
-                .addHeader("Referer", "http://www.dm5.com")
+                .addHeader("Referer", "https://www.dm5.com")
                 .build();
     }
 
@@ -258,7 +279,7 @@ public class DM5 extends MangaParser {
     @Override
     public Headers getHeader(String url) {
         String cid = "m".concat(StringUtils.match("cid=(\\d+)", url, 1));
-        return Headers.of("Referer", "http://m.dm5.com/".concat(cid));
+        return Headers.of("Referer", "https://m.dm5.com/".concat(cid));
     }
 
     @Override
@@ -267,7 +288,7 @@ public class DM5 extends MangaParser {
         if (list != null) {
             cid = list.get(0).getChapter();
         }
-        return Headers.of("Referer", "http://m.dm5.com/".concat(cid));
+        return Headers.of("Referer", "https://m.dm5.com/".concat(cid));
     }
 
     private static class Category extends MangaCategory {
@@ -279,10 +300,12 @@ public class DM5 extends MangaParser {
 
         @Override
         public String getFormat(String... args) {
+            // TODO 参数顺序：站上必须是 area 在 tag 前（manhua-list-area36-tag31 有效，
+            //  manhua-list-tag31-area36 是 404）。下面按 subject → area → ... 拼接，分类页实测打不开。
             String path = args[CATEGORY_SUBJECT].concat(" ").concat(args[CATEGORY_AREA]).concat(" ").concat(args[CATEGORY_PROGRESS])
                     .concat(" ").concat(args[CATEGORY_ORDER]).trim();
             path = path.replaceAll("\\s+", "-");
-            return StringUtils.format("http://www.dm5.com/manhua-list-%s-p%%d", path);
+            return StringUtils.format("https://www.dm5.com/manhua-list-%s-p%%d", path);
         }
 
         @Override
