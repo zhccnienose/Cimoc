@@ -1,5 +1,6 @@
 package com.haleydu.cimoc.backend.source
 
+import com.haleydu.cimoc.backend.storage.Keys
 import com.haleydu.cimoc.backend.storage.dao.SourceConfigDao
 import com.haleydu.cimoc.core.CimocCore
 import com.haleydu.cimoc.model.Source
@@ -30,6 +31,8 @@ import com.haleydu.cimoc.parser.MangaParser
 class ParserFactory(
     private val registry: SourceRegistry,
     private val config: SourceConfigDao,
+    /** 只用来回答「这个图源必需的配置项填了没有」。窄接口，与解析器拿到的是同一个。 */
+    private val settings: CimocCore.Settings,
 ) {
 
     /**
@@ -91,4 +94,38 @@ class ParserFactory(
 
     /** 图源标题。未知 type 返回 null。 */
     fun title(type: Int): String? = registry.byType(type)?.title
+
+    // ------------------------------------------------------------ 配置缺失
+
+    /**
+     * 图源缺了哪项必修配置。null 表示没发现已知问题。
+     *
+     * 现在只有 `HHAAZZ`(type=2)：它对站址**没有默认值**（`baseUrl` 初值是空串，构造时从配置里读），
+     * 用户在设置里不填的话，它只要被启用，每次搜索就稳定贡献一条 `SourceFailed`。
+     * 图源页据此把它标出来——否则用户只能对着一句「连接失败」猜是网络问题还是没配置。
+     *
+     * 这张表**暂时是硬编码的**：图源类目前没有「声明自己需要哪些配置项」的位置
+     * （`getDefaultSource()` 只带 title / type / enable 三样）。等 `MangaParser` 上加了这样的
+     * 声明，这里换成反射取值即可，本方法的签名与调用方都不用动。
+     *
+     * 阻塞（查配置走 SQLite 缓存，通常是内存命中）。前端请在 IO 上调用。
+     */
+    fun unavailableReason(type: Int): String? {
+        val required = REQUIRED_CONFIG[type] ?: return null
+        val missing = required.filter { settings.getString(it, "").isBlank() }
+        return if (missing.isEmpty()) null else "缺少配置 ${missing.joinToString("、")}"
+    }
 }
+
+/** `HHAAZZ.TYPE`。 */
+private const val HHAAZZ_TYPE = 2
+
+/**
+ * 「会读配置、且不填就不能用」的图源：`type -> 配置项 key`。
+ *
+ * type 写死而不是引 `HHAAZZ.TYPE`——本模块按设计只通过反射认识图源，
+ * 不 import 任何一个图源类（见 [SourceRegistry] 的说明）。
+ */
+private val REQUIRED_CONFIG: Map<Int, List<String>> = mapOf(
+    HHAAZZ_TYPE to listOf(Keys.HHAAZZ_BASEURL),
+)

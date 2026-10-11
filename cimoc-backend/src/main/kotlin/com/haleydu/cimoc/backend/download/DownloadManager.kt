@@ -41,6 +41,15 @@ sealed interface DownloadEvent {
     /** 某个任务的状态、进度或产出路径发生了变化。前端拿 [DownloadEvent.Changed.task] 直接渲染。 */
     data class Changed(val task: DownloadTask) : DownloadEvent
 
+    /**
+     * 任务被删除（[DownloadManager.cancel]）。
+     *
+     * 为什么不能复用 [Changed]：任务删了就没有 `DownloadTask` 可发，而界面需要知道
+     * 把它从列表里去掉。少了这个事件，**取消操作在界面上是不可见的**——列表里那行还在，
+     * 角标也一直多算一个。
+     */
+    data class Removed(val chapterId: Long) : DownloadEvent
+
     /** 队列跑空了。 */
     data object Idle : DownloadEvent
 }
@@ -148,6 +157,10 @@ class DownloadManager(
         running[chapterId]?.cancel()
         library.tasks.delete(chapterId)
         layout.clearWorkDir(chapterId)
+        // 这一条必须显式发。被 cancel 掉的那个任务会走到 runTask 的 CancellationException
+        // 分支、试图上报 PAUSE，但 updateState 是「改完再读回来」，行已经删了就**什么都不发**。
+        // 不补这一句，事件流上「任务消失」这件事就完全不存在（见 Removed 的注释）。
+        _events.tryEmit(DownloadEvent.Removed(chapterId))
     }
 
     fun pauseAll() {
