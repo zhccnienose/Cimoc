@@ -1,3 +1,41 @@
 {
-    "java.configuration.updateBuildConfiguration": "automatic"
+    "java.configuration.updateBuildConfiguration": "automatic",
+
+    // ---- JDK 17。四个键都要写，它们管的是**四个不同的 JVM**：
+    //   java.jdt.ls.java.home        跑 Java 语言服务器（redhat.java）的那个
+    //   java.import.gradle.java.home 导入 / 执行 Gradle 构建的那个（daemon）
+    //   kotlin.java.home             跑 Kotlin 语言服务器（fwcd.kotlin）的那个
+    //   java.configuration.runtimes  编译 / 运行时用的 JDK（debug、classpath 解析）
+    //
+    // 必须显式写死：Windows 注册表里注册的 D:\java 只有 java17 / java8 两个子目录、
+    // **自身没有 java 可执行文件**，自动探测认不出来（是探测不到，不是没装）。
+    "java.jdt.ls.java.home": "D:\\java\\java17",
+    "java.import.gradle.java.home": "D:\\java\\java17",
+    "kotlin.java.home": "D:\\java\\java17",
+    "java.configuration.runtimes": [
+        {
+            "name": "JavaSE-17",
+            "path": "D:\\java\\java17",
+            "default": true
+        }
+    ],
+
+    // 仓库根目录下**没有** build.gradle —— 三个模块各自是独立构建。
+    // 打开 d:\work\Cimoc 时，Gradle 扩展会去子目录里找构建根，会找到 cimoc-core /
+    // cimoc-backend / cimoc-desktop 三个（app/ 已于 287acca 删掉构建文件，只剩资源，不参与）。
+    // wrapper.enabled 保持 true：必须用各模块自带的 wrapper（里面的 distributionUrl
+    // 是腾讯镜像），换成本地 Gradle 发行版会绕过它。
+    "java.import.gradle.enabled": true,
+    "java.import.gradle.wrapper.enabled": true,
+
+    "kotlin.languageServer.enabled": true,
+    "kotlin.compiler.jvm.target": "17",
+
+    // 源码含中文注释与中文字符串字面量
+    "files.encoding": "utf8",
+
+    // 让集成终端里手敲的 ./gradlew 也能跑起来（等价于命令行里先 set JAVA_HOME）
+    "terminal.integrated.env.windows": {
+        "JAVA_HOME": "D:\\java\\java17"
+    }
 }

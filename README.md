@@ -4,7 +4,7 @@
 
 - 只做五件事：**收藏**、**检查收藏夹更新**、**多图源搜索**、**下载**、**支持后续添加图源**
 - **不作为阅读器使用**——下载产物是 CBZ，交给第三方漫画阅读器打开
-- **只做后端库**，不做命令行入口；前端是后续工作
+- 后端是**库**，没有命令行入口；界面是 Compose Desktop
 
 原 Android 的 `app/` 模块已整体移除（提交 `287acca`），仓库里只保留它的资源文件。
 
@@ -15,7 +15,8 @@
 ```
 Cimoc/
 ├── cimoc-core/       纯 JVM 解析层（42 个图源），可独立构建，零 Android 依赖
-├── cimoc-backend/    后端库（Kotlin + 协程），22 个文件 / 约 3000 行
+├── cimoc-backend/    后端库（Kotlin + 协程），23 个文件 / 3323 行
+├── cimoc-desktop/    桌面界面（Compose Desktop），8 个文件 / 1317 行
 ├── app/              原 Android 模块的残留资源（图标、图片等），无源码
 ├── category.py       独立小工具：抓某个图源的分类清单，与后端无关
 ├── screenshot/
@@ -23,9 +24,42 @@ Cimoc/
 └── hellovr10.jks     原 Android 签名密钥（见「安全事项」）
 ```
 
-两个模块各自有 `settings.gradle` 和 `gradlew`，可**独立构建**。`cimoc-backend` 通过 Gradle
-复合构建（`includeBuild('../cimoc-core')`）引用核心层——把 `com.haleydu.cimoc:cimoc-core:0.1.0`
-这个坐标替换成本地构建产物，核心层「零 Android 依赖」这条约束因此不会被 `android.jar` 污染。
+三个模块各自有 `settings.gradle` 和 `gradlew`，可**独立构建**。依赖靠 Gradle 复合构建串起来：
+
+```
+cimoc-desktop ──includeBuild──▶ cimoc-backend ──includeBuild──▶ cimoc-core
+```
+
+把 `com.haleydu.cimoc:cimoc-*:0.1.0` 这些坐标替换成本地构建产物，中间层不用发布到任何仓库，
+核心层「零 Android 依赖」这条约束也因此不会被 `android.jar` 污染。
+
+`cimoc-desktop` 只写了一句 `includeBuild('../cimoc-backend')`，**不需要**再写
+`includeBuild('../cimoc-core')`——嵌套复合构建是传递的，实测验过（Gradle 8.7）。
+
+---
+
+## 运行
+
+```bash
+cd cimoc-desktop
+JAVA_HOME="D:/java/java17" ./gradlew run
+```
+
+**数据位置**（用户会问的第一件事，所以定成固定规则）：
+
+```
+%APPDATA%/Cimoc/
+├── cimoc.db      收藏、章节缓存、下载任务、设置
+├── download/     CBZ 成品与 .partial 临时页
+└── .cover/       封面磁盘缓存
+```
+
+选 `%APPDATA%` 而不是 exe 同级目录：Program Files 下的目录默认不可写，「装在 Program Files
+就用不了」是个很常见的坑。环境变量 `CIMOC_HOME` 可以整体覆盖（调试、便携模式、跑第二份
+互不干扰的数据）。
+
+打包用 `./gradlew packageAppImage` 或 `createDistributable`。**不要用 `packageMsi`**——
+Windows 上打 MSI 需要本机装着 WiX 3.x，没装会直接失败。
 
 ---
 
@@ -37,14 +71,10 @@ Cimoc/
 | `cimoc-core` 工具链升级到 Gradle 8.7 + JDK 17 + Kotlin 1.9.24 | ✅ 完成 |
 | 移除 Android `app/` 源码与构建体系 | ✅ 完成 |
 | `cimoc-backend` 后端库（五功能） | 🟡 代码写完、编译通过，**真实网络链路只验证了一半** |
-| Compose Desktop 前端 | ⬜ 未开始 |
-
-**模块规模**
-
-- `cimoc-core`：76 个 `.java` + 1 个 `.kt`。`source/` 下 47 个文件 —— 40 个入注册表（36 个
-  默认启用），`Locality` / `Null` 与 5 个已注释的空占位类不入表
-- `cimoc-backend`：22 个 `.kt`、约 3000 行。对外只暴露 `CimocBackend` 一个门面，其余按职责分层
-  （`http` / `source` / `engine` / `download` / `storage`），进度通过 `Flow` 上报
+| Compose Desktop 前端：工程骨架 + 应用外壳 | ✅ 完成（能启动、能开后端、六个入口可切换、下载角标实时） |
+| Compose Desktop 前端：搜索页 + 详情/章节页 | ✅ 完成（搜索、结果网格、简介与章节多选、入队下载） |
+| Compose Desktop 前端：收藏夹 / 下载 / 图源 / 设置 | ✅ 完成 |
+| Compose Desktop 前端：更新检查 | ⬜ 仍是空占位 |
 
 ### 近期提交
 
@@ -57,8 +87,6 @@ a960a27  docs: 重写根 README，记录后端进度、图源健康度与未完�
 47e1bdf  cimoc-core: 工具链升级到 Gradle 8.7 + JDK 17 + Kotlin 1.9.24
 8286aff  cimoc-core: 迁移完成，Gradle 6.7.1 + JDK 8 + Kotlin 1.5.10 验证通过
 ```
-
-`upgrade-toolchain` 分支**领先 `release-tci` 6 个提交，且没有 upstream——从未 push 过**。
 
 ---
 
@@ -124,8 +152,12 @@ CBZ 的内容约定决定第三方阅读器能不能正确翻页，所以这三�
 
 **代码与功能**
 
-1. **Compose Desktop 前端**（未开始）——`CimocBackend` 是唯一入口，`open()` 一次拿到各子系统，
-   收集 `Flow` 驱动界面。这是让项目真正能用的主线，也是唯一完全没动过的一块
+1. **Compose Desktop 前端还剩「更新检查」一个界面**——**搜索页、详情/章节页、收藏夹、下载页、
+   图源页、设置页**已可用（搜索 → 结果网格 → 简介与章节多选 → 入队下载 → 下载页看每章的进度；
+   收藏会把简介和章节目录写成 JSON 快照，收藏夹点开读那份快照，不发网络请求；设置页可改下载
+   目录、收藏页标题字号等，并能把设置导入导出成 JSON 配置文件）。`CimocBackend` 是唯一入口，
+   `open()` 一次拿到各子系统，收集 `Flow` 驱动界面。剩下的页面照 [FRONTEND.md](FRONTEND.md)
+   第三节的接法写
 2. **下载出 CBZ 的真实端到端验证**（未做）——「解析章节 → 下图片 → 出 CBZ → 第三方阅读器
    能打开」只验证了离线部分（打包、命名、目录布局）。它需要一个能返回结果的图源才能跑通，
    所以挂在第 4 项后面
@@ -205,7 +237,7 @@ CBZ 的内容约定决定第三方阅读器能不能正确翻页，所以这三�
 
 ## 开发约定
 
-- 两个模块都需要 **JDK 17**。构建时先设 `JAVA_HOME`：
+- 三个模块都需要 **JDK 17**。构建时先设 `JAVA_HOME`：
 
   ```bash
   JAVA_HOME="D:/java/java17" ./gradlew build
@@ -221,4 +253,9 @@ CBZ 的内容约定决定第三方阅读器能不能正确翻页，所以这三�
 
 - 不要跑 `./gradlew wrapper --gradle-version`，会把 wrapper 里的腾讯镜像冲回官方源（实测会卡死）。
 - 源码含中文注释与中文字符串字面量，`gradle.properties` 里已固定 `-Dfile.encoding=UTF-8`。
+- **`cimoc-desktop/build.gradle` 的 `mavenCentral()` 之外还有 `google()`，删不掉**：Compose 的
+  desktop 产物依赖 `androidx.annotation` / `androidx.collection` / `androidx.lifecycle`，这几个
+  只在 Google 的仓库里。缺了它的报错是 `Could not find androidx.annotation:annotation:1.8.0`，
+  看起来像版本写错，实际是仓库没配对。另外 `maven.google.com` 在部分网络下连不通，但 Gradle 的
+  `google()` 走的是 `dl.google.com/dl/android/maven2`，不受影响。
 - 详见 [cimoc-core/README.md](cimoc-core/README.md)。

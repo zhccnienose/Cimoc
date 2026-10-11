@@ -3,6 +3,10 @@ build/
 out/
 out-test/
 
+# VSCode 的 Java 扩展（redhat.java）导入 Gradle 构建后，默认把编译输出放这里。
+# 不是 Gradle 的产物（那个在 build/），但同样是生成物，别提交。
+bin/
+
 # IDE
 .idea/
 *.iml

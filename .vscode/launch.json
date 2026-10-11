@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // 用法：先跑任务「Cimoc: 运行（等调试器附加到 5005）」，等它打印
+            // "Listening for transport dt_socket at address: 5005" 之后，在这里按 F5。
+            //
+            // 为什么是 attach 而不是 launch：进程要由 Gradle 起（它负责拼 classpath、
+            // 装配 compose 的资源目录），直接 launch 一个主类拿不到那些东西。
+            // Gradle 的 --debug-jvm 会 fork 出 JVM 并加上 JDWP 参数、然后挂起等待。
+            //
+            // 断点打在主类里最直接：cimoc-desktop/src/main/kotlin/.../desktop/Main.kt
+            "type": "java",
+            "name": "附加到 Cimoc 桌面端 (5005)",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 5005
+        }
+    ]
+}
