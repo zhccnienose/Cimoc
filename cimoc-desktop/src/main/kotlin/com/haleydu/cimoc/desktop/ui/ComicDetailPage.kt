@@ -193,11 +193,17 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
             loaded == null -> LoadFailure(comic, error, Modifier.fillMaxWidth().weight(1f))
 
             else -> {
-                // 上半栏：简介。0.42 / 0.58 的分割是照着「上半栏 / 下半栏」来的，
-                // 简介再长也在这个区域里滚，不会把章节列表挤没。
+                // 上半栏：简介。简介再长也在这个区域里滚，不会把章节列表挤没。
+                //
+                // 0.34 / 0.66 而不是平分：上半栏的高度实际上由封面钉死了——
+                // 封面固定 118dp 宽、按 COVER_ASPECT_RATIO 推出约 174dp 高，简介那列
+                // 自己滚动、不参与撑高。默认窗口（720dp 高）下这里可分到约 550dp，
+                // 0.42 会给上半栏 230dp 左右，于是封面底下空出五十多 dp，
+                // 分割线看着像悬在空地上。0.34 把这块余量收到十几 dp，
+                // 分割线跟着上移，章节列表也能多露两三行。
                 //
                 // 传 loaded.comic 而不是参数那个 comic：走本地缓存时只有这份有简介
-                IntroSection(loaded.comic, Modifier.fillMaxWidth().weight(0.42f))
+                IntroSection(loaded.comic, Modifier.fillMaxWidth().weight(0.34f))
 
                 Divider(Modifier.padding(vertical = 10.dp))
 
@@ -207,7 +213,7 @@ fun ComicDetailPage(comic: Comic, onBack: () -> Unit, fromCache: Boolean = false
                     onToggle = { id -> selected = if (id in selected) selected - id else selected + id },
                     onSelectAll = { selected = loaded.chapters.mapNotNull { it.id }.toSet() },
                     onClear = { selected = emptySet() },
-                    modifier = Modifier.fillMaxWidth().weight(0.58f),
+                    modifier = Modifier.fillMaxWidth().weight(0.66f),
                 )
             }
         }
@@ -353,6 +359,13 @@ private fun ChapterSection(
                 .fillMaxWidth()
                 .weight(1f)
                 .background(MaterialTheme.colors.onSurface.copy(alpha = 0.03f)),
+            // 行与行之间留 4dp。加上 ChapterRow 自己上下各 2dp 的内边距，两行文字
+            // 之间实到 8dp——原来只有 4dp，几百章连排下来像一堵墙。
+            //
+            // 缝隙本身不带 clickable（可点区域仍是行内那块），要「点哪都能勾上」
+            // 的话得把间距算进 ChapterRow 的内边距里，但那样就没有缝隙可言了——
+            // 列表底色是整块平铺的，行内留白和行间留白在视觉上没区别。
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // key 用行号。不能用 Chapter 对象：Chapter.equals 只比 path（Chapter.java:132），
             // 跨漫画的章节会判等，path 为 null 还会 NPE。
