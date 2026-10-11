@@ -15,9 +15,6 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -104,27 +101,39 @@ class UpdateChecker(
         send(UpdateEvent.Done(counter.checked.get(), counter.updated.get(), counter.failed.get()))
     }
 
-    // ---------------------------------------------------------------- 每日门槛
+    // ---------------------------------------------------------------- 自动检查门槛
 
     /**
-     * 「每天最多自动检查一次」是否到点了。
+     * 自动检查到点了没有。
      *
-     * 后端**只提供判断**，是否触发由前端决定——原版是在 `App` 启动时调一次。
+     * 后端**只提供判断**，是否触发由前端决定（桌面端在 `AppHolder.start()` 里问一次）。
+     * 间隔取自 [Keys.CHECK_UPDATE_INTERVAL_HOURS]：改小查得勤，代价是每轮都要把整个
+     * 收藏夹打一遍图源站。
      */
-    fun shouldAutoCheckToday(now: Long = System.currentTimeMillis()): Boolean {
-        if (!settings.getBoolean(Keys.CHECK_UPDATE_DAILY, Defaults.CHECK_UPDATE_DAILY)) return false
+    fun shouldAutoCheck(now: Long = System.currentTimeMillis()): Boolean {
+        if (!settings.getBoolean(Keys.CHECK_UPDATE_AUTO, Defaults.CHECK_UPDATE_AUTO)) return false
         val last = settings.getLong(Keys.CHECK_UPDATE_LAST, 0L)
         if (last <= 0L) return true
-        return dayOf(last) != dayOf(now)
+
+        val interval = settings.getInt(
+            Keys.CHECK_UPDATE_INTERVAL_HOURS,
+            Defaults.CHECK_UPDATE_INTERVAL_HOURS,
+        )
+        val elapsed = now - last
+        // 系统时钟被往回拨时 elapsed 是负数。当成「间隔已过」：多查一轮只是多几次网络请求，
+        // 而按字面取负值的话会静悄悄地把自动检查停掉，用户根本看不见。
+        return elapsed < 0 || elapsed >= interval.coerceAtLeast(1) * HOUR_MS
     }
 
-    /** 记录本次检查时间。前端在检查开始时调用一次即可。 */
+    /**
+     * 记录本次检查时间。前端在检查**开始时**调用一次即可。
+     *
+     * 手动检查也要调：[shouldAutoCheck] 比的是「距上次检查」，刚手动查完又被自动查一遍
+     * 是白费一轮请求。
+     */
     fun markChecked(now: Long = System.currentTimeMillis()) {
         settings.put(Keys.CHECK_UPDATE_LAST, now)
     }
-
-    private fun dayOf(epochMillis: Long): LocalDate =
-        Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate()
 
     // ---------------------------------------------------------------- 单本检查
 
@@ -180,6 +189,9 @@ class UpdateChecker(
     companion object {
         /** 更新检查的网络超时。比常规请求短得多，见 [checkAll]。 */
         const val CHECK_TIMEOUT_MS = 1_500L
+
+        /** 自动检查间隔的换算基数（小时 → 毫秒）。 */
+        private const val HOUR_MS = 3_600_000L
 
         /**
          * 默认并发。原版是串行，这里开 4 路。

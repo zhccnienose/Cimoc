@@ -25,6 +25,9 @@ class Library(private val db: Database) {
 
     fun favorites(): List<Comic> = comics.listFavorites()
 
+    /** 收藏总数。更新检查的进度条要拿它当分母——检查是逐本产出事件的，不先数一次就没法画进度。 */
+    fun countFavorites(): Int = comics.countFavorites()
+
     fun isFavorite(id: Long): Boolean = comics.load(id)?.favorite != null
 
     /**
@@ -50,6 +53,9 @@ class Library(private val db: Database) {
     }
 
     fun setHighlight(id: Long, highlight: Boolean) = comics.setHighlight(id, highlight)
+
+    /** 清掉全部「有更新」标记（收藏页的「全部标为已读」）。@return 实际清掉了几本 */
+    fun clearHighlights(): Int = comics.clearHighlights()
 
     /** 更新检查发现新章节：写更新时间、打上高亮、顶到收藏夹最前。 */
     fun markUpdated(id: Long, updateAt: String, now: Long = System.currentTimeMillis()) =

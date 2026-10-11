@@ -3,6 +3,8 @@ package com.haleydu.cimoc.desktop
 import com.haleydu.cimoc.backend.CimocBackend
 import com.haleydu.cimoc.backend.download.DownloadEvent
 import com.haleydu.cimoc.backend.download.DownloadState
+import com.haleydu.cimoc.backend.engine.UpdateEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +28,40 @@ sealed interface BackendState {
      * 吞掉的话用户的观感就是「双击没反应」，无从下手。
      */
     data class Failed(val error: Throwable) : BackendState
+}
+
+/**
+ * 收藏更新检查的状态。
+ *
+ * 挂在 [AppHolder] 上而不是收藏页里，理由有两条：自动检查在**启动时**就跑，那时用户
+ * 多半还没进过收藏页；手动检查跑了一半切到别的页再切回来，进度也不该从头开始。
+ */
+sealed interface UpdateCheckState {
+
+    /** 本次启动内还没查过。 */
+    data object Idle : UpdateCheckState
+
+    /** 正在查。[total] 为 0 表示收藏总数还没数出来，界面画不定态即可。 */
+    data class Running(val checked: Int, val total: Int, val updated: Int) : UpdateCheckState
+
+    /**
+     * 查完一轮。
+     *
+     * [finishedAt] 是给收藏页用的信号：它一变就代表又跑完了一轮，该重读收藏列表了
+     * （更新过的会被顶到最前并打上高亮）。
+     */
+    data class Done(
+        val checked: Int,
+        val updated: Int,
+        val failed: Int,
+        val finishedAt: Long,
+    ) : UpdateCheckState
+
+    /**
+     * 整轮没跑起来（读库出错之类）。**单本图源的失败不在这里**——那种走
+     * [UpdateEvent.Failed]，本轮会继续，最后算进 [Done.failed]。
+     */
+    data class Failed(val error: String) : UpdateCheckState
 }
 
 /**
@@ -62,6 +98,11 @@ class AppHolder(private val database: Path) {
      */
     val unfinishedTasks: StateFlow<Int> = _unfinishedTasks.asStateFlow()
 
+    private val _updateCheck = MutableStateFlow<UpdateCheckState>(UpdateCheckState.Idle)
+
+    /** 收藏更新检查的状态。收藏页订阅它画进度，见 [UpdateCheckState]。 */
+    val updateCheck: StateFlow<UpdateCheckState> = _updateCheck.asStateFlow()
+
     /** 由 UI 线程写、IO 线程读，要 volatile。 */
     @Volatile
     private var closed = false
@@ -89,7 +130,89 @@ class AppHolder(private val database: Path) {
                 onSuccess = { BackendState.Ready(it) },
                 onFailure = { BackendState.Failed(it) },
             )
-            result.getOrNull()?.let { backend -> scope.launch { watchDownloads(backend) } }
+            result.getOrNull()?.let { backend ->
+                scope.launch { watchDownloads(backend) }
+                // 自动检查：够间隔才跑。判断只读 AppSettings 的内存缓存、不碰 SQLite，
+                // 但仍然丢进协程——启动路径上不该有任何同步调用，哪怕它眼下很快
+                scope.launch {
+                    if (runCatching { backend.update.shouldAutoCheck() }.getOrDefault(false)) {
+                        startCheck(backend)
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- 收藏更新检查
+
+    /**
+     * 手动触发一轮收藏更新检查。收藏页的「检查更新」按钮走这里。
+     *
+     * 正在跑时直接忽略——连点两下不该同时打两遍整个收藏夹。
+     */
+    fun checkForUpdates() {
+        val backend = (_state.value as? BackendState.Ready)?.backend ?: return
+        startCheck(backend)
+    }
+
+    private fun startCheck(backend: CimocBackend) {
+        if (_updateCheck.value is UpdateCheckState.Running) return
+        // 先占住状态再进协程：自动检查与用户点按钮几乎同时发生时，靠这一步挡掉第二轮。
+        // 此刻还没有总数，界面按 total == 0 画不定态
+        _updateCheck.value = UpdateCheckState.Running(checked = 0, total = 0, updated = 0)
+        scope.launch { runCheck(backend) }
+    }
+
+    /**
+     * 跑一轮检查。全程在 [scope]（[Dispatchers.IO]）上：`checkAll()` 的 `channelFlow`
+     * 内部用的是阻塞 DAO，[com.haleydu.cimoc.backend.engine.UpdateChecker.markChecked] 也要写库。
+     */
+    private suspend fun runCheck(backend: CimocBackend) {
+        try {
+            val total = backend.books.countFavorites()
+            if (total == 0) {
+                _updateCheck.value = UpdateCheckState.Done(0, 0, 0, System.currentTimeMillis())
+                return
+            }
+
+            // 时间戳只在真的要查的时候写。空收藏夹那条路不写：否则用户刚收藏第一本，
+            // 就得等满一个间隔才会被自动检查到
+            backend.update.markChecked()
+            _updateCheck.value = UpdateCheckState.Running(checked = 0, total = total, updated = 0)
+
+            var processed = 0
+            var updated = 0
+            var summary: UpdateEvent.Done? = null
+
+            backend.update.checkAll().collect { event ->
+                when (event) {
+                    is UpdateEvent.Checked -> {
+                        processed += 1
+                        if (event.updated) updated += 1
+                    }
+                    // 图源层面失败也算「查过了一本」，否则进度条永远差几本到不了头
+                    is UpdateEvent.Failed -> processed += 1
+                    is UpdateEvent.Done -> summary = event
+                }
+                if (summary == null) {
+                    _updateCheck.value = UpdateCheckState.Running(processed, total, updated)
+                }
+            }
+
+            // 最终数字以 Done 为准：后端的 checked 不含失败的那几本，和 processed 口径不同
+            val done = summary ?: UpdateEvent.Done(processed, updated, 0)
+            _updateCheck.value = UpdateCheckState.Done(
+                checked = done.checked,
+                updated = done.updated,
+                failed = done.failed,
+                finishedAt = System.currentTimeMillis(),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            _updateCheck.value = UpdateCheckState.Failed(
+                "${e.javaClass.simpleName}: ${e.message?.takeIf { it.isNotBlank() } ?: "(无消息)"}"
+            )
         }
     }
 

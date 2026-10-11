@@ -20,11 +20,13 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -40,8 +42,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.haleydu.cimoc.backend.storage.Defaults
 import com.haleydu.cimoc.backend.storage.Keys
+import com.haleydu.cimoc.desktop.UpdateCheckState
 import com.haleydu.cimoc.model.Comic
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -58,14 +63,28 @@ import kotlinx.coroutines.withContext
  * [ComicDetailPage] 的 `fromCache = true`：详情用收藏时写下的 JSON 快照。
  * 见 [com.haleydu.cimoc.backend.storage.FavoriteCache] 与详情页的注释。
  *
+ * ### 更新检查挂在这一页上
+ *
+ * 原来导航栏里有个独立的「更新」入口，那只是个占位页。更新检查的对象就是收藏夹，
+ * 所以它做进了这里：一个「检查更新」按钮 + 一行状态。
+ *
+ * 按钮和状态都**不属于本页**：状态在 [com.haleydu.cimoc.desktop.AppHolder] 上，
+ * 自动检查在程序启动时就可能已经在跑了（那时用户还没进过这一页），手动检查跑一半
+ * 切走再切回来也不该从头开始。这里只负责订阅与显示。
+ *
  * ### 从详情页返回要重读列表
  *
  * 详情页里可以取消收藏，回来后那本就该消失。页面本身不会重组到新数据（`favorites()`
  * 是一次阻塞查询），所以 [revision] 在返回时 +1，让下面那个 LaunchedEffect 重跑。
+ * 一轮更新检查跑完同理——[UpdateCheckState.Done.finishedAt] 变化就是那个信号。
  */
 @Composable
-fun FavoritesPage() {
+fun FavoritesPage(
+    updateCheck: StateFlow<UpdateCheckState>,
+    onCheckUpdates: () -> Unit,
+) {
     val app = LocalApp.current
+    val check by updateCheck.collectAsState()
 
     val items = remember { mutableStateListOf<Comic>() }
     var loading by remember { mutableStateOf(true) }
@@ -73,7 +92,11 @@ fun FavoritesPage() {
     var revision by remember { mutableStateOf(0) }
     var opened by remember { mutableStateOf<Comic?>(null) }
 
-    LaunchedEffect(app.backend, revision) {
+    // 只有 Done 参与 key。整个 check 放进去的话，检查过程中每查完一本进度就变一次，
+    // 这个 effect 会跟着重跑一遍——等于每本漫画重读一次收藏夹。
+    val checkedAt = (check as? UpdateCheckState.Done)?.finishedAt
+
+    LaunchedEffect(app.backend, revision, checkedAt) {
         loading = true
         val loaded = withContext(Dispatchers.IO) {
             runCatching { app.backend.favorites.list() }
@@ -83,8 +106,17 @@ fun FavoritesPage() {
                 items.clear()
                 items.addAll(list)
             }
-            .onFailure { error = describe(it) }
+            .onFailure { error = "收藏夹读取失败：${describe(it)}" }
         loading = false
+    }
+
+    /** 「全部标为已读」：更新检查留下的高亮只有这里能清掉，否则它会一直在收藏页上。 */
+    fun markAllRead() {
+        app.scope.launch {
+            runCatching { app.backend.books.clearHighlights() }
+                .onSuccess { revision += 1 }
+                .onFailure { error = "标记已读失败：${describe(it)}" }
+        }
     }
 
     val current = opened
@@ -121,13 +153,27 @@ fun FavoritesPage() {
                 )
             }
             Spacer(Modifier.weight(1f))
+            // 只有确实存着「有更新」标记时才出现：平时多一个按钮只是噪音
+            if (items.any { it.highlight }) {
+                TextButton(onClick = { markAllRead() }) { Text("全部标为已读") }
+            }
+            TextButton(
+                // 检查中禁用而不是隐藏：按钮突然消失会让人以为点错了；
+                // 禁用时位置还在，状态行也正在说明它在干什么
+                enabled = check !is UpdateCheckState.Running,
+                onClick = onCheckUpdates,
+            ) {
+                Text("检查更新")
+            }
             TextButton(onClick = { revision += 1 }) { Text("刷新") }
         }
+
+        CheckStatusLine(check)
 
         error?.let { message ->
             Spacer(Modifier.height(6.dp))
             Text(
-                "收藏夹读取失败：$message",
+                message,
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.error,
             )
@@ -167,6 +213,87 @@ fun FavoritesPage() {
 }
 
 /**
+ * 检查状态那一行：进度 / 结果 / 失败原因。
+ *
+ * [UpdateCheckState.Idle]（本次启动内还没查过）时**什么都不画**，连外面那层间距也不占——
+ * 否则没查过的时候，标题和网格之间会凭空多出一条空白。
+ */
+@Composable
+private fun CheckStatusLine(state: UpdateCheckState) {
+    if (state is UpdateCheckState.Idle) return
+
+    Spacer(Modifier.height(6.dp))
+
+    when (state) {
+        is UpdateCheckState.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
+            // total 还没数出来就画不定态。这时候写 0/0 的进度条会被读成「一本都没查成」
+            if (state.total <= 0) {
+                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "正在读取收藏夹…",
+                    style = MaterialTheme.typography.body2,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                )
+            } else {
+                LinearProgressIndicator(
+                    progress = state.checked.toFloat() / state.total,
+                    modifier = Modifier.width(160.dp).height(6.dp),
+                    backgroundColor = MaterialTheme.colors.onSurface.copy(alpha = 0.12f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "正在检查 ${state.checked}/${state.total} 本",
+                    style = MaterialTheme.typography.body2,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                )
+            }
+
+            if (state.updated > 0) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "已发现 ${state.updated} 本更新",
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.error,
+                )
+            }
+        }
+
+        is UpdateCheckState.Done -> Text(
+            text = if (state.checked == 0) {
+                "检查完成：收藏夹里没有可检查的漫画。"
+            } else {
+                buildString {
+                    append("检查完成：已查 ${state.checked} 本")
+                    append(
+                        if (state.updated > 0) {
+                            "，发现 ${state.updated} 本有更新（已置顶，封面右上角有标记）"
+                        } else {
+                            "，没有发现更新"
+                        }
+                    )
+                    // 失败的单独说一句。图源下架的收藏会稳定地落在这一档，
+                    // 不说清楚的话用户会以为「已查 N 本」里少了什么
+                    if (state.failed > 0) {
+                        append("；另有 ${state.failed} 本检查失败已跳过（图源下架或超时），不影响其他本")
+                    }
+                }
+            },
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.75f),
+        )
+
+        is UpdateCheckState.Failed -> Text(
+            text = "更新检查没跑起来：${state.error}",
+            style = MaterialTheme.typography.caption,
+            color = MaterialTheme.colors.error,
+        )
+
+        UpdateCheckState.Idle -> Unit
+    }
+}
+
+/**
  * 一格收藏：封面 + 下三分之一的蒙版。
  *
  * 格子高度由 [COVER_ASPECT_RATIO] 定死，和搜索结果页一致——不固定的话每格高度会随
@@ -193,6 +320,22 @@ private fun FavoriteCell(comic: Comic, onClick: () -> Unit) {
             .clickable(onClick = onClick),
     ) {
         CoverImage(comic, Modifier.fillMaxSize())
+
+        // 更新检查的落点。`highlight` 由后端在发现新章节时写进库（见 ComicDao.applyUpdateCheck），
+        // 光靠「排到最前」判断不出来是谁被顶上去的，得有这个标记
+        if (comic.highlight) {
+            Text(
+                text = "更新",
+                style = MaterialTheme.typography.caption,
+                color = Color.White,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .background(MaterialTheme.colors.error, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        }
 
         Column(
             Modifier

@@ -216,12 +216,29 @@ object SettingsSpec {
         ),
 
         ToggleField(
-            key = Keys.CHECK_UPDATE_DAILY,
-            title = "每天自动检查一次收藏更新",
+            key = Keys.CHECK_UPDATE_AUTO,
+            title = "启动时自动检查收藏更新",
             group = "更新",
-            detail = "启动时若今天还没查过，就自动跑一次收藏夹的更新检查。关掉之后仍可在「更新」页手动查。",
+            detail = "启动后若距上次检查已超过下面的间隔，就自动把收藏夹查一遍。" +
+                "关掉之后仍可在收藏页手动检查。",
             restartRequired = false,
-            default = Defaults.CHECK_UPDATE_DAILY,
+            default = Defaults.CHECK_UPDATE_AUTO,
+        ),
+
+        // 6 小时的步长是刻意的：这一项是滑块，1 小时一档的话 200dp 里要挤下 160 多档，
+        // 根本停不到想要的数上。6/12/24/48… 这个粒度对「多久查一次」也够用了
+        NumberField(
+            key = Keys.CHECK_UPDATE_INTERVAL_HOURS,
+            title = "自动检查间隔",
+            group = "更新",
+            detail = "两次自动检查之间至少隔这么久。每轮检查都会把整个收藏夹打一遍图源站，" +
+                "间隔太短容易被限流。24 小时即每天一次。",
+            restartRequired = false,
+            default = Defaults.CHECK_UPDATE_INTERVAL_HOURS,
+            min = 6,
+            max = 168,
+            step = 6,
+            unit = " 小时",
         ),
 
         ToggleField(

@@ -13,11 +13,14 @@ object Keys {
     /** 下载并发数。 */
     const val DOWNLOAD_THREAD = "download.thread"
 
-    /** 上次自动检查收藏更新的时间戳（毫秒）。 */
+    /** 上次检查收藏更新的时间戳（毫秒）。手动与自动检查都写它。 */
     const val CHECK_UPDATE_LAST = "check.update.last"
 
-    /** 是否启用「每天最多自动检查一次」的门槛。 */
-    const val CHECK_UPDATE_DAILY = "check.update.daily"
+    /** 是否启用启动时的自动检查。 */
+    const val CHECK_UPDATE_AUTO = "check.update.auto"
+
+    /** 两次自动检查之间的最小间隔（小时）。 */
+    const val CHECK_UPDATE_INTERVAL_HOURS = "check.update.interval_hours"
 
     /**
      * 是否启用严格的 TLS 证书校验。
@@ -56,7 +59,11 @@ object Keys {
 
 object Defaults {
     const val DOWNLOAD_THREAD = 2
-    const val CHECK_UPDATE_DAILY = true
+    const val CHECK_UPDATE_AUTO = true
+
+    /** 24 小时 = 每天一次，强度与原版「每天最多检查一次」相当。 */
+    const val CHECK_UPDATE_INTERVAL_HOURS = 24
+
     const val HTTP_STRICT_TLS = false
     const val STORAGE_ROOT = ""
     const val SEARCH_RATE_LIMIT_MS = 200

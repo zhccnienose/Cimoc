@@ -109,6 +109,22 @@ class ComicDao(private val db: Database) {
     }
 
     /**
+     * 清掉全部高亮，对应原版菜单里的「全部标记已读」。
+     *
+     * 高亮是更新检查留下的唯一痕迹（`favorite_at` 被顶到最前，看不出来是谁顶的），
+     * 没有这个入口的话它会一直留在收藏页上。
+     *
+     * `WHERE highlight = 1` 不是多余的：没有它，每次「标为已读」都会把整张表重写一遍。
+     *
+     * @return 实际清掉了几本
+     */
+    fun clearHighlights(): Int = db.write { conn ->
+        conn.prepareStatement("UPDATE comic SET highlight = 0 WHERE highlight = 1").use { ps ->
+            ps.executeUpdate()
+        }
+    }
+
+    /**
      * 更新检查发现新章节时的写回（对应原版 `Manga.checkUpdate` 里的三个 setter）。
      *
      * `favorite_at` 一并顶到 [now]，让这本漫画浮到收藏夹最前——原版也是这个行为。

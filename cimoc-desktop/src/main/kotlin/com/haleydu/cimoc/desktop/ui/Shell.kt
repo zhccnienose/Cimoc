@@ -41,18 +41,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 六个入口。顺序即使用频率：搜索在最上，设置在最下。
+ * 五个入口。顺序即使用频率：搜索在最上，设置在最下。
  *
- * [hint] 是给下一个阶段的自己看的——骨架期每个页面都还没有实现，
- * 空页面上留一句「这个页面接哪个 API」比留一句「施工中」有用。
+ * 曾经还有一个「更新」入口，它只是更新检查的占位页——功能做进收藏页之后，
+ * 单独留一个入口反而让人以为收藏页上的检查是另一回事。
  */
-enum class Section(val label: String, val hint: String) {
-    SEARCH("搜索", "search.search(keyword, page, sources = null, strict)"),
-    FAVORITE("收藏", "books.favorites()"),
-    UPDATE("更新", "update.checkAll()"),
-    DOWNLOAD("下载", "download.events + 先用 books.tasks.listAll() 铺底"),
-    SOURCES("图源", "sources() / setEnabled(type, enabled)"),
-    SETTINGS("设置", "settings.snapshot()"),
+enum class Section(val label: String) {
+    SEARCH("搜索"),
+    FAVORITE("收藏"),
+    DOWNLOAD("下载"),
+    SOURCES("图源"),
+    SETTINGS("设置"),
 }
 
 @Composable
@@ -114,11 +113,15 @@ private fun Shell(holder: AppHolder, backend: CimocBackend) {
         Box(Modifier.fillMaxHeight().weight(1f)) {
             when (section) {
                 Section.SEARCH -> SearchPage()
-                Section.FAVORITE -> FavoritesPage()
+                // 更新检查的状态与触发都挂在 holder 上：这个页面来回切走时，
+                // 检查还在跑（见 UpdateCheckState），进度不该跟着页面一起消失
+                Section.FAVORITE -> FavoritesPage(
+                    updateCheck = holder.updateCheck,
+                    onCheckUpdates = { holder.checkForUpdates() },
+                )
                 Section.DOWNLOAD -> DownloadPage()
                 Section.SOURCES -> SourcesPage(onSourcesChanged = { sourcesRevision += 1 })
                 Section.SETTINGS -> SettingsPage()
-                else -> Placeholder(section)
             }
         }
     }
@@ -187,21 +190,6 @@ private fun Nav(
             style = MaterialTheme.typography.caption,
             color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
             modifier = Modifier.padding(horizontal = 8.dp),
-        )
-    }
-}
-
-@Composable
-private fun Placeholder(section: Section) {
-    Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Text(section.label, style = MaterialTheme.typography.h5)
-        Spacer(Modifier.height(12.dp))
-        Text("这个页面还没有实现。", style = MaterialTheme.typography.body1)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "接的是：${section.hint}",
-            style = MaterialTheme.typography.caption,
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
         )
     }
 }
