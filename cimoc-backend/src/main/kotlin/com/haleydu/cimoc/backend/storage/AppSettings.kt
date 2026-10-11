@@ -36,6 +36,14 @@ object Keys {
     /** 单张图片的下载重试次数。原版是 20，过于激进。 */
     const val DOWNLOAD_RETRY = "download.retry"
 
+    /**
+     * 收藏页里漫画标题的字号（sp）。
+     *
+     * 这一项**只有前端会读**（`ui/FavoritesPage.kt`），后端不认识它；放在这里是为了让
+     * 所有配置项集中在一处，导出的设置文件也不必特意绕过它。
+     */
+    const val FAVORITE_TITLE_SIZE = "ui.favorite.title_size"
+
     // ---- 以下 key 由图源类自己读取，原样沿用 Android 版的字符串值，不做映射。
     //      改这些值等于改变图源行为，改动前先看对应图源类的实现。
 
@@ -53,6 +61,9 @@ object Defaults {
     const val STORAGE_ROOT = ""
     const val SEARCH_RATE_LIMIT_MS = 200
     const val DOWNLOAD_RETRY = 4
+
+    /** 14sp 正好是 Material 2 里 `body2` 的字号，即收藏页改之前的样子。 */
+    const val FAVORITE_TITLE_SIZE = 14
 }
 
 /**

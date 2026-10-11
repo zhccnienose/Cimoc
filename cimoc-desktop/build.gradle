@@ -1,0 +1,67 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
+plugins {
+    id 'org.jetbrains.kotlin.jvm' version '1.9.24'
+    id 'org.jetbrains.compose' version '1.6.11'
+}
+
+group = 'com.haleydu.cimoc'
+version = '0.1.0'
+
+// 工具链与另两个模块一致：Gradle 8.7 + JDK 17 + Kotlin 1.9.24。
+// Compose 的版本必须与 Kotlin 对齐：Compose Multiplatform 1.6.11 对应的就是 Kotlin 1.9.24，
+// 错开一个版本会在编译期报「compose compiler 与 Kotlin 版本不兼容」。
+repositories {
+    mavenCentral()
+    // 必须加。Compose 的 desktop 产物依赖 androidx.annotation / androidx.collection /
+    // androidx.lifecycle，这几个**只在 Google 的仓库里**，Maven Central 上没有——
+    // 缺了它的报错是「Could not find androidx.annotation:annotation:1.8.0」，
+    // 看起来像版本写错，实际是仓库没配对。
+    //
+    // Gradle 的 google() 指向 dl.google.com/dl/android/maven2（不是 maven.google.com，
+    // 后者在部分网络下连不通），所以走它没问题。
+    google()
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    // 坐标由 settings.gradle 的 includeBuild 替换成本地 cimoc-backend 构建。
+    // 用 implementation 而非 api：这是个应用程序（叶子节点），没有下游消费者，
+    // 不需要把后端的类型再往外传递。
+    implementation 'com.haleydu.cimoc:cimoc-backend:0.1.0'
+
+    // 当前操作系统的 Compose 运行时 + Skiko 原生库。
+    // 用 currentOs 而不是逐平台列举，避免把另外两个平台的几百 MB 原生库也拖下来。
+    implementation compose.desktop.currentOs
+}
+
+compose.desktop {
+    application {
+        mainClass = 'com.haleydu.cimoc.desktop.MainKt'
+
+        // 源码与界面文案里有中文。Kotlin 把字面量按 UTF-8 编进 class 常量池，
+        // 但 JVM 输出到控制台时按 file.encoding 解码，在 UTF-8 终端里不指定就是乱码。
+        // 用 jvmArgs(...) 方法而不是 `jvmArgs += [...]`：这个属性在 DSL 里只暴露了 getter，
+        // Groovy 的 `+=` 会走「读-改-写」而报 read-only。
+        jvmArgs '-Dfile.encoding=UTF-8'
+
+        nativeDistributions {
+            // 只做「可运行目录」和「app-image」，**不做 MSI**：
+            // Windows 上打 MSI 需要本机装着 WiX 3.x，没装会直接构建失败。
+            targetFormats TargetFormat.AppImage
+
+            packageName = 'Cimoc'
+            packageVersion = '0.1.0'
+            description = 'Cimoc 桌面端'
+            vendor = 'haleydu'
+
+            // 不裁剪模块。jlink 的自动推断（jdeps）只看静态引用，看不见反射，
+            // 而本项目的图源注册就是靠反射扫描类路径——漏掉的模块在开发期毫无症状，
+            // 只在「打包后 0 个图源」时才暴露。用体积换确定性。
+            includeAllModules = true
+        }
+    }
+}

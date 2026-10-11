@@ -3,8 +3,10 @@ package com.haleydu.cimoc.backend
 import com.haleydu.cimoc.backend.download.DownloadLayout
 import com.haleydu.cimoc.backend.download.DownloadManager
 import com.haleydu.cimoc.backend.engine.ComicEngine
+import com.haleydu.cimoc.backend.engine.FavoriteStore
 import com.haleydu.cimoc.backend.engine.SearchEngine
 import com.haleydu.cimoc.backend.engine.UpdateChecker
+import com.haleydu.cimoc.backend.http.CoverLoader
 import com.haleydu.cimoc.backend.http.HttpClientFactory
 import com.haleydu.cimoc.backend.http.HttpEngine
 import com.haleydu.cimoc.backend.source.ParserFactory
@@ -13,6 +15,7 @@ import com.haleydu.cimoc.backend.source.SourceRegistry
 import com.haleydu.cimoc.backend.storage.AppSettings
 import com.haleydu.cimoc.backend.storage.Database
 import com.haleydu.cimoc.backend.storage.Defaults
+import com.haleydu.cimoc.backend.storage.FavoriteCache
 import com.haleydu.cimoc.backend.storage.Keys
 import com.haleydu.cimoc.backend.storage.Library
 import com.haleydu.cimoc.core.CimocCore
@@ -41,6 +44,8 @@ class CimocBackend private constructor(
     val settings: AppSettings,
     /** 收藏夹与章节列表。 */
     val books: Library,
+    /** 收藏夹门面：数据库那份 + 简介/章节目录的 JSON 快照，两个存储一起维护。 */
+    val favorites: FavoriteStore,
     /** 图源注册表（反射扫描的结果）。 */
     val registry: SourceRegistry,
     /** 按 type 取解析器、读写图源开关。 */
@@ -55,6 +60,8 @@ class CimocBackend private constructor(
     val download: DownloadManager,
     /** 下载目录布局。 */
     val layout: DownloadLayout,
+    /** 封面取用与磁盘缓存。列表界面用它，缓存对调用方透明。 */
+    val covers: CoverLoader,
 ) : Closeable {
 
     /** 全部图源，含启用状态。设置界面用。 */
@@ -108,7 +115,7 @@ class CimocBackend private constructor(
                 val registry = SourceRegistry.scan(
                     classLoader ?: CimocBackend::class.java.classLoader
                 )
-                val parsers = ParserFactory(registry, books.sources)
+                val parsers = ParserFactory(registry, books.sources, settings)
                 val http = HttpEngine(client)
 
                 val root = resolveStorageRoot(database, storageRoot, settings)
@@ -124,6 +131,7 @@ class CimocBackend private constructor(
                     database = db,
                     settings = settings,
                     books = books,
+                    favorites = FavoriteStore(books, FavoriteCache(root.resolve(FavoriteCache.DIR))),
                     registry = registry,
                     parsers = parsers,
                     search = SearchEngine(registry, parsers, http, settings),
@@ -131,6 +139,8 @@ class CimocBackend private constructor(
                     update = UpdateChecker(registry, parsers, http, books, settings),
                     download = download,
                     layout = layout,
+                    // 封面缓存放在下载根下，与 `.partial` 同一层级
+                    covers = CoverLoader(http, root.resolve(CoverLoader.DIR), parsers::parserOrNull),
                 )
             } catch (e: Throwable) {
                 runCatching { db.close() }

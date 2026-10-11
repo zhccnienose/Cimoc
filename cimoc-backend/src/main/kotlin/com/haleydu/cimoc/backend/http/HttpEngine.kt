@@ -63,6 +63,57 @@ class HttpEngine(private val client: OkHttpClient) {
     }
 
     /**
+     * 把响应体读成字节数组。**不做重试**，理由与 [downloadTo] 相同：要退避就得有
+     * `delay()`，那是协程的事，不在这里做。
+     *
+     * 与 [getBody] 的区别不只是返回值类型：那个方法会把响应体当文本解码
+     * （还要按页面声明的 `charset=` 反推编码），拿它读图片会直接毁掉数据。
+     * 需要图片字节的地方（如封面）必须走这里。
+     *
+     * **有大小上限**：[downloadTo] 是流式写盘，再大也只是占磁盘；这里要整块进内存，
+     * 而图源的响应是**不可信数据**，一个不设限的 `body.bytes()` 就是一条 OOM 路径。
+     * 上限默认 [DEFAULT_MAX_BYTES]，服务端谎报或不报 `Content-Length` 也挡得住——
+     * 判断依据是**实际读到的字节数**，不是响应头。
+     *
+     * @throws HttpException 非 2xx、响应体为空、读取失败、或超过 [maxBytes]
+     */
+    suspend fun getBytes(request: Request, maxBytes: Int = DEFAULT_MAX_BYTES): ByteArray =
+        withContext(Dispatchers.IO) {
+            val call = client.newCall(request)
+            // 与 downloadTo 同样在协程取消时顺手取消请求：封面列表快速滚动时，
+            // 已经划出屏幕的那些请求不该继续占着连接和线程
+            val registration = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+
+            try {
+                call.execute().use { response ->
+                    if (!response.isSuccessful()) {
+                        throw HttpException(request.url().toString(), "HTTP ${response.code()}")
+                    }
+                    val body = response.body()
+                        ?: throw HttpException(request.url().toString(), "响应体为空")
+
+                    // 多读一个字节：读满 maxBytes + 1 就说明实际内容超限了。
+                    // 不能拿 Content-Length 判断——那个值可以缺失，也可以撒谎。
+                    val data = body.byteStream().use { it.readNBytes(maxBytes + 1) }
+                    if (data.size > maxBytes) {
+                        throw HttpException(request.url().toString(), "响应超过 $maxBytes 字节上限")
+                    }
+                    data
+                }
+            } catch (e: Throwable) {
+                // 被取消时 OkHttp 抛的是 IOException("Canceled")，必须还原成
+                // CancellationException，否则上层会把它当网络故障去重试
+                if (!currentCoroutineContext().isActive) {
+                    throw CancellationException("请求已取消: ${request.url()}")
+                }
+                if (e is HttpException) throw e
+                throw HttpException(request.url().toString(), "读取响应体失败: ${e.message}", e)
+            } finally {
+                registration?.dispose()
+            }
+        }
+
+    /**
      * 单次尝试把响应体写进 [target]。**不做重试**——重试要配合退避，而退避需要
      * `delay()` 才能不占着线程，那是协程的事，放在 [com.haleydu.cimoc.backend.download.DownloadManager] 里做。
      *
@@ -114,4 +165,12 @@ class HttpEngine(private val client: OkHttpClient) {
     /** 换一套超时，其余策略（含 TLS 选择）不变。 */
     fun withTimeouts(connectTimeoutMs: Long, readTimeoutMs: Long): HttpEngine =
         HttpEngine(HttpClientFactory.derive(client, connectTimeoutMs, readTimeoutMs))
+
+    companion object {
+        /**
+         * [getBytes] 的默认上限。封面是几十到几百 KB 的量级，16 MiB 留了两个数量级的余量，
+         * 又远小于一次 OOM 的量。
+         */
+        const val DEFAULT_MAX_BYTES: Int = 16 * 1024 * 1024
+    }
 }

@@ -1,0 +1,64 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Ctrl+Shift+B 的默认任务
+            "label": "Cimoc: 运行桌面端",
+            "type": "shell",
+            // 走 cmd.exe 而不是直接写 gradlew.bat：PowerShell 默认不搜索当前目录，
+            // 直接写相对路径的 gradlew.bat 会报「无法识别」；cmd.exe /c 在
+            // PowerShell / cmd / Git Bash 下都能用。
+            "command": "cmd.exe",
+            "args": ["/c", "gradlew.bat", "run", "--console=plain"],
+            "options": {
+                "cwd": "${workspaceFolder}/cimoc-desktop",
+                "env": { "JAVA_HOME": "D:\\java\\java17" }
+            },
+            "problemMatcher": [],
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+        },
+        {
+            // 配套 .vscode/launch.json 里的附加配置：先跑这个，它会打印
+            // "Listening for transport dt_socket at address: 5005" 然后**停住等**，
+            // 再去「运行和调试」面板按 F5 附加。
+            "label": "Cimoc: 运行（等调试器附加到 5005）",
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": ["/c", "gradlew.bat", "run", "--debug-jvm", "--console=plain"],
+            "options": {
+                "cwd": "${workspaceFolder}/cimoc-desktop",
+                "env": { "JAVA_HOME": "D:\\java\\java17" }
+            },
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+        },
+        {
+            // 构建 cimoc-desktop 会连带构建 cimoc-backend 与 cimoc-core —— 复合构建
+            // 是传递的，一条命令就够，不用分别进三个目录。
+            "label": "Cimoc: 构建（core + backend + desktop）",
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": ["/c", "gradlew.bat", "build", "--console=plain"],
+            "options": {
+                "cwd": "${workspaceFolder}/cimoc-desktop",
+                "env": { "JAVA_HOME": "D:\\java\\java17" }
+            },
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+        },
+        {
+            // 打「可运行目录」产物，产物在 cimoc-desktop/build/compose/binaries/。
+            // **不要**用 packageMsi：Windows 上打 MSI 需要本机装着 WiX 3.x，没装直接失败。
+            "label": "Cimoc: 打包 app-image",
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": ["/c", "gradlew.bat", "createDistributable", "--console=plain"],
+            "options": {
+                "cwd": "${workspaceFolder}/cimoc-desktop",
+                "env": { "JAVA_HOME": "D:\\java\\java17" }
+            },
+            "problemMatcher": []
+        }
+    ]
+}
