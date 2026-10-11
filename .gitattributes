@@ -1,0 +1,12 @@
+# 换行符。**只在检出时生效**，仓库里一律存 LF，不改历史。
+#
+# 本机 core.autocrlf=true，没有这个文件时 git 会把所有文本文件按 CRLF 检出——
+# 包括 .sh 和三个 gradlew。CRLF 的 shell 脚本在 Git Bash 下跑不起来：
+# shebang 变成 "#!/bin/sh\r"，报 bad interpreter: /usr/bin/env^M，
+# 或者逐行报 $'\r': command not found。这两个脚本都是要 ./xxx.sh 执行的，
+# 所以必须钉成 LF。
+#
+# 没写成 `* text=auto`：那会把全仓库的文本文件都卷进来，改动面太大，
+# 而实际问题只出在这几个可执行脚本上。
+*.sh    text eol=lf
+gradlew text eol=lf
